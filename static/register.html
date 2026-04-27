@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация в Funky Town</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-4">
+
+    <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
+        <h2 class="text-xl font-bold mb-4 text-center">Анкета гостя 🎢</h2>
+        
+        <!-- Форма родителя -->
+        <div class="mb-4">
+            <label class="block text-gray-700 text-sm font-bold mb-2">Ваш телефон</label>
+            <input type="tel" id="phone" placeholder="+7..." class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+        </div>
+
+        <div class="mb-4">
+            <label class="block text-gray-700 text-sm font-bold mb-2">Ваше Имя</label>
+            <input type="text" id="full_name" placeholder="Иван Иванов" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+        </div>
+
+        <hr class="my-4">
+
+        <!-- Дети -->
+        <h3 class="text-lg font-semibold mb-2">Дети 👶</h3>
+        <div id="kids-container">
+            <!-- Сюда будут добавляться поля для детей -->
+        </div>
+
+        <button onclick="addKidField()" class="bg-blue-100 text-blue-700 font-semibold py-2 px-4 rounded w-full mb-4 border border-blue-300 hover:bg-blue-200">
+            + Добавить ребенка
+        </button>
+
+        <!-- Кнопка отправки -->
+        <button id="main-btn" onclick="sendData()" class="bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-4 rounded w-full text-lg mt-4">
+            Зарегистрироваться ✅
+        </button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // tg_id передаётся ботом прямо в URL (?tg_id=XXXX) — работает на любом клиенте
+        const urlParams = new URLSearchParams(window.location.search);
+        const TG_ID = parseInt(urlParams.get('tg_id') || '0')
+            || (tg.initDataUnsafe?.user?.id ?? 0); // фолбэк на initDataUnsafe
+з
+        function addKidField() {
+            const container = document.getElementById('kids-container');
+            const kidDiv = document.createElement('div');
+            kidDiv.className = "mb-4 p-3 bg-gray-50 border rounded-lg kid-entry";
+            kidDiv.innerHTML = `
+                <input type="text" placeholder="Имя ребенка" class="kid-name shadow border rounded w-full py-2 px-3 mb-2">
+                <select class="kid-gender shadow border rounded w-full py-2 px-3 mb-2 bg-white">
+                    <option value="boy">Мальчик</option>
+                    <option value="girl">Девочка</option>
+                </select>
+                <label class="text-xs text-gray-500">Дата рождения:</label>
+                <input type="date" class="kid-birth shadow border rounded w-full py-2 px-3">
+                <button onclick="this.parentElement.remove()" class="text-red-500 text-xs mt-1 underline">Удалить</button>
+            `;
+            container.appendChild(kidDiv);
+        }
+
+        async function sendData() {
+            const phone = document.getElementById('phone').value.trim();
+            const fullName = document.getElementById('full_name').value.trim();
+
+            if (!phone) {
+                tg.showAlert("Введите номер телефона!");
+                return;
+            }
+
+            if (!TG_ID) {
+                tg.showAlert("Не удалось определить ваш Telegram ID. Закройте анкету и откройте снова через кнопку «📝 Регистрация».");
+                return;
+            }
+
+            const kids = [];
+            document.querySelectorAll('.kid-entry').forEach(div => {
+                const name = div.querySelector('.kid-name').value;
+                const gender = div.querySelector('.kid-gender').value;
+                const birth = div.querySelector('.kid-birth').value;
+                if (name && birth) {
+                    kids.push({ name, gender, birth_date: birth });
+                }
+            });
+
+            const payload = {
+                phone: phone,
+                full_name: fullName,
+                tg_id: TG_ID,
+                kids: kids
+            };
+
+            const btn = document.getElementById('main-btn');
+            btn.disabled = true;
+            btn.textContent = "Отправляем...";
+
+            try {
+                const response = await fetch('/customers/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    tg.showAlert(
+                        `Добро пожаловать в Funky Town!\n\nВаша карта создана. На счёт зачислено ${result.balance} приветственных бонусов!`,
+                        () => tg.close()
+                    );
+                } else {
+                    const error = await response.json();
+                    tg.showAlert("Ошибка: " + (error.detail || "Попробуйте ещё раз."));
+                    btn.disabled = false;
+                    btn.textContent = "Зарегистрироваться ✅";
+                }
+            } catch (e) {
+                tg.showAlert("Ошибка соединения с сервером. Проверьте интернет и попробуйте снова.");
+                btn.disabled = false;
+                btn.textContent = "Зарегистрироваться ✅";
+            }
+        }
+    </script>
+</body>
+</html>

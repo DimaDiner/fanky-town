@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Funky Town — Администратор</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        .tab-btn { border-bottom: 3px solid transparent; transition: all .2s; }
+        .tab-btn.active { border-bottom-color: #7C3AED; color: #7C3AED; }
+        .fade { animation: fade .2s ease; }
+        @keyframes fade { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-30 shadow-sm">
+    <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="zap" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+            <h1 class="text-base font-extrabold text-gray-900 leading-tight">Funky Town</h1>
+            <p class="text-xs text-gray-400">Панель администратора</p>
+        </div>
+    </div>
+    <button onclick="refreshAll()" title="Обновить" class="text-gray-400 hover:text-purple-600 transition-colors p-2 rounded-lg hover:bg-gray-100">
+        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+    </button>
+</header>
+
+<!-- TABS NAV -->
+<div class="bg-white border-b border-gray-200 px-4 flex overflow-x-auto sticky top-14 z-20 shadow-sm">
+    <button id="tab-dashboard"     onclick="switchTab('dashboard')"     class="tab-btn active inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-purple-700 whitespace-nowrap">
+        <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Дашборд
+    </button>
+    <button id="tab-customers"     onclick="switchTab('customers')"     class="tab-btn inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-gray-500 whitespace-nowrap">
+        <i data-lucide="users" class="w-4 h-4"></i> Клиенты
+    </button>
+    <button id="tab-transactions"  onclick="switchTab('transactions')"  class="tab-btn inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-gray-500 whitespace-nowrap">
+        <i data-lucide="receipt" class="w-4 h-4"></i> Транзакции
+    </button>
+    <button id="tab-staff"         onclick="switchTab('staff')"         class="tab-btn inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-gray-500 whitespace-nowrap">
+        <i data-lucide="user-check" class="w-4 h-4"></i> Персонал
+    </button>
+    <button id="tab-settings"      onclick="switchTab('settings')"      class="tab-btn inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-gray-500 whitespace-nowrap">
+        <i data-lucide="settings" class="w-4 h-4"></i> Настройки
+    </button>
+    <button id="tab-broadcast"     onclick="switchTab('broadcast')"     class="tab-btn inline-flex items-center gap-2 px-5 py-3.5 text-sm font-semibold text-gray-500 whitespace-nowrap">
+        <i data-lucide="megaphone" class="w-4 h-4"></i> Рассылка
+    </button>
+</div>
+
+<main class="max-w-6xl mx-auto px-4 py-6">
+
+<!-- ══════════════════════ DASHBOARD ══════════════════════ -->
+<div id="content-dashboard" class="fade">
+
+    <div id="stats-grid" class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <!-- Cards injected by JS -->
+        <div class="col-span-2 lg:col-span-5 text-center text-gray-400 py-8 text-sm">Загрузка статистики...</div>
+    </div>
+
+    <!-- Последние транзакции (мини-лог) -->
+    <div class="bg-white rounded-2xl shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="font-bold text-gray-800">Последние операции</h2>
+            <button onclick="switchTab('transactions')" class="text-purple-600 text-xs font-medium hover:text-purple-800">Все →</button>
+        </div>
+        <div id="recent-tx" class="text-center text-gray-400 text-sm py-6">Загрузка...</div>
+    </div>
+</div>
+
+<!-- ══════════════════════ CUSTOMERS ══════════════════════ -->
+<div id="content-customers" class="hidden fade">
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <div class="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+            <h2 class="font-bold text-gray-800">Клиенты</h2>
+            <div class="flex gap-2 w-full sm:w-auto">
+                <input id="customer-search" type="text" placeholder="Поиск по имени или телефону..."
+                    oninput="debounceSearch()"
+                    class="flex-1 sm:w-64 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-purple-500">
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                    <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                        <th class="px-4 py-3 font-semibold">#</th>
+                        <th class="px-4 py-3 font-semibold">Имя</th>
+                        <th class="px-4 py-3 font-semibold">Телефон</th>
+                        <th class="px-4 py-3 font-semibold text-right">Баланс</th>
+                        <th id="th-kids" onclick="sortByBirthday()"
+                            class="px-4 py-3 font-semibold text-center cursor-pointer hover:text-purple-600 transition-colors select-none">
+                            <span class="inline-flex items-center justify-center gap-1">
+                                Дети
+                                <svg id="kids-sort-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 5v14M5 12l7-7 7 7"/><!-- unsorted up -->
+                                    <path d="M5 12l7 7 7-7"/><!-- unsorted down -->
+                                </svg>
+                            </span>
+                        </th>
+                        <th class="px-4 py-3 font-semibold">Регистрация</th>
+                    </tr>
+                </thead>
+                <tbody id="customers-table" class="divide-y divide-gray-50">
+                    <tr><td colspan="6" class="text-center text-gray-400 py-10 text-sm">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="customers-count" class="px-4 py-3 text-xs text-gray-400 border-t border-gray-50"></div>
+    </div>
+</div>
+
+<!-- ══════════════════════ TRANSACTIONS ══════════════════════ -->
+<div id="content-transactions" class="hidden fade">
+
+    <!-- Фильтры -->
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <div class="flex flex-col gap-4">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+                <h2 class="font-bold text-gray-800">Лог транзакций</h2>
+                <button onclick="exportToExcel()" id="export-excel-btn"
+                    class="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2 rounded-xl text-sm transition-colors">
+                    <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                    Экспорт в Excel
+                </button>
+            </div>
+            <div class="flex flex-wrap gap-3 items-center">
+                <input type="text" id="tx-search" placeholder="Поиск по клиенту или телефону..."
+                    onkeydown="if(event.key==='Enter') applyTxFilters()"
+                    class="flex-1 min-w-[200px] border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-purple-500">
+                <select id="tx-type-filter"
+                    class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-500 bg-white">
+                    <option value="">Все типы</option>
+                    <option value="manual">Ручная</option>
+                    <option value="registration">Регистрация</option>
+                    <option value="birthday">День рождения</option>
+                </select>
+                <input type="date" id="tx-date-from" title="Дата с"
+                    class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-500 bg-white">
+                <input type="date" id="tx-date-to" title="Дата по"
+                    class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-500 bg-white">
+                <select id="tx-per-page"
+                    class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-500 bg-white">
+                    <option value="25">25 на стр.</option>
+                    <option value="50">50 на стр.</option>
+                    <option value="100">100 на стр.</option>
+                </select>
+                <button onclick="applyTxFilters()"
+                    class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded-xl text-sm transition-colors">
+                    Применить
+                </button>
+                <button onclick="resetTxFilters()"
+                    class="border border-gray-200 hover:bg-gray-50 text-gray-600 font-medium px-4 py-2 rounded-xl text-sm transition-colors">
+                    Сбросить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                    <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                        <th class="px-4 py-3 font-semibold">Дата</th>
+                        <th class="px-4 py-3 font-semibold">Клиент</th>
+                        <th class="px-4 py-3 font-semibold text-right">Сумма</th>
+                        <th class="px-4 py-3 font-semibold">Тип</th>
+                        <th class="px-4 py-3 font-semibold">Кассир</th>
+                    </tr>
+                </thead>
+                <tbody id="transactions-table" class="divide-y divide-gray-50">
+                    <tr><td colspan="5" class="text-center text-gray-400 py-10 text-sm">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <!-- Пагинация -->
+        <div id="tx-pagination" class="px-5 py-4 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3 min-h-[60px]"></div>
+    </div>
+</div>
+
+<!-- ══════════════════════ STAFF ══════════════════════ -->
+<div id="content-staff" class="hidden fade">
+
+    <!-- Форма добавления кассира -->
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <h2 class="font-bold text-gray-800 mb-1">Добавить кассира</h2>
+        <p class="text-sm text-gray-400 mb-4">
+            Система сгенерирует одноразовую ссылку. Отправьте её кассиру — он перейдёт в бота и подтвердит аккаунт.
+        </p>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+            <input type="text" id="staff-name" placeholder="ФИО кассира"
+                class="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-500">
+            <div class="flex items-center flex-1 border border-gray-200 rounded-xl px-4 py-2.5 focus-within:border-purple-500">
+                <span class="text-gray-400 mr-1 text-sm">@</span>
+                <input type="text" id="staff-username" placeholder="username в Telegram"
+                    class="flex-1 focus:outline-none bg-transparent text-sm">
+            </div>
+            <button onclick="addStaff()" id="add-staff-btn"
+                class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm whitespace-nowrap transition-colors">
+                + Добавить
+            </button>
+        </div>
+        <p id="staff-add-error" class="mt-2 text-red-500 text-sm hidden"></p>
+
+        <!-- Invite link -->
+        <div id="invite-section" class="hidden mt-4 p-4 bg-green-50 rounded-xl border border-green-200">
+            <p class="text-sm font-semibold text-green-700 mb-2 flex items-center gap-2">
+                <i data-lucide="check-circle" class="w-4 h-4"></i> Кассир добавлен! Отправьте эту ссылку кассиру:
+            </p>
+            <div class="flex gap-2">
+                <input type="text" id="invite-link" readonly
+                    class="flex-1 bg-white border border-green-300 rounded-lg px-3 py-2 text-sm font-mono text-gray-700">
+                <button onclick="copyInvite()" id="copy-btn"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors">
+                    Копировать
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Кассир нажимает ссылку → открывает бота → нажимает Start → аккаунт активируется автоматически.</p>
+        </div>
+    </div>
+
+    <!-- Staff list -->
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 class="font-bold text-gray-800">Список персонала</h2>
+            <button onclick="loadStaff()" class="text-purple-600 text-xs font-medium hover:text-purple-800">Обновить</button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                    <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                        <th class="px-4 py-3 font-semibold">ФИО</th>
+                        <th class="px-4 py-3 font-semibold">Username</th>
+                        <th class="px-4 py-3 font-semibold">Роль</th>
+                        <th class="px-4 py-3 font-semibold">Статус</th>
+                        <th class="px-4 py-3 font-semibold text-right">Действие</th>
+                    </tr>
+                </thead>
+                <tbody id="staff-table" class="divide-y divide-gray-50">
+                    <tr><td colspan="5" class="text-center text-gray-400 py-10 text-sm">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════ SETTINGS ══════════════════════ -->
+<div id="content-settings" class="hidden fade">
+
+    <!-- Бонус за регистрацию -->
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center flex-shrink-0">
+                <i data-lucide="gift" class="w-5 h-5 text-green-500"></i>
+            </div>
+            <div class="flex-1">
+                <h2 class="font-bold text-gray-800 mb-1">Бонус за регистрацию</h2>
+                <p class="text-sm text-gray-400 mb-4">Начисляется автоматически при первой регистрации клиента. Укажите <strong>0</strong> — чтобы отключить.</p>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <input type="number" id="reg-bonus-input" min="0" step="1" placeholder="500"
+                        class="w-36 border border-gray-200 rounded-xl px-4 py-2.5 text-base font-bold text-gray-800 focus:outline-none focus:border-purple-500 text-center">
+                    <span class="text-sm text-gray-400">бонусов</span>
+                    <button onclick="saveRegBonus()" id="reg-bonus-btn"
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition-colors">
+                        Сохранить
+                    </button>
+                </div>
+                <p id="reg-bonus-status" class="text-sm mt-2 hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ссылка на WhatsApp -->
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center flex-shrink-0">
+                <i data-lucide="message-circle" class="w-5 h-5 text-green-500"></i>
+            </div>
+            <div class="flex-1">
+                <h2 class="font-bold text-gray-800 mb-1">Ссылка на WhatsApp</h2>
+                <p class="text-sm text-gray-400 mb-4">Кнопка "Перейти в WhatsApp" появится в боте у клиентов. Оставьте поле пустым, чтобы скрыть кнопку.</p>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <input type="url" id="whatsapp-url-input" placeholder="https://wa.me/..."
+                        class="flex-1 min-w-0 border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:outline-none focus:border-purple-500">
+                    <button onclick="saveWhatsappUrl()" id="whatsapp-url-btn"
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition-colors">
+                        Сохранить
+                    </button>
+                </div>
+                <p id="whatsapp-url-status" class="text-sm mt-2 hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ручное начисление -->
+    <div class="bg-white rounded-2xl shadow-sm p-5">
+        <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center flex-shrink-0">
+                <i data-lucide="plus-circle" class="w-5 h-5 text-purple-500"></i>
+            </div>
+            <div class="flex-1">
+                <h2 class="font-bold text-gray-800 mb-1">Ручное начисление бонусов</h2>
+                <p class="text-sm text-gray-400 mb-4">Выберите клиентов и укажите сумму. Все клиенты с Telegram получат уведомление.</p>
+
+                <!-- Список клиентов с чекбоксами -->
+                <div class="border border-gray-200 rounded-xl overflow-hidden mb-4">
+                    <div class="bg-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-100">
+                        <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                            <input type="checkbox" id="select-all-customers" onchange="toggleSelectAll()"
+                                class="w-4 h-4 accent-purple-600 cursor-pointer">
+                            <span class="text-sm font-semibold text-gray-700">Выбрать всех</span>
+                        </label>
+                        <span id="selected-count" class="text-xs text-purple-600 font-semibold"></span>
+                    </div>
+                    <div class="px-3 py-2 border-b border-gray-100">
+                        <input type="text" id="accrue-search" placeholder="Поиск по имени или телефону..."
+                            oninput="filterAccrueList()"
+                            class="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:border-purple-400">
+                    </div>
+                    <div id="accrue-customer-list" class="max-h-64 overflow-y-auto divide-y divide-gray-50">
+                        <div class="text-center text-gray-400 text-sm py-6">Загрузка клиентов...</div>
+                    </div>
+                </div>
+
+                <!-- Сумма + превью -->
+                <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Сумма начисления</label>
+                        <div class="flex items-center gap-2">
+                            <input type="number" id="accrue-amount" min="1" step="1" placeholder="100"
+                                oninput="updateAccruePreview()"
+                                class="w-36 border border-gray-200 rounded-xl px-4 py-2.5 text-base font-bold focus:outline-none focus:border-purple-500 text-center">
+                            <span class="text-sm text-gray-400">бонусов</span>
+                        </div>
+                    </div>
+                    <p id="accrue-preview" class="text-sm text-gray-500 pb-2.5 hidden"></p>
+                </div>
+
+                <p id="accrue-error" class="text-red-500 text-sm mt-3 hidden"></p>
+
+                <button onclick="submitAccrue()" id="accrue-btn"
+                    class="mt-4 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold px-6 py-3 rounded-xl text-sm transition-colors inline-flex items-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4"></i>
+                    Начислить бонусы
+                </button>
+
+                <div id="accrue-result" class="hidden mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm"></div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ══════════════════════ BROADCAST ══════════════════════ -->
+<div id="content-broadcast" class="hidden fade">
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        <!-- Выбор получателей -->
+        <div class="bg-white rounded-2xl shadow-sm p-5">
+            <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="users" class="w-5 h-5 text-blue-500"></i>
+                </div>
+                <div class="flex-1">
+                    <h2 class="font-bold text-gray-800 mb-1">Получатели</h2>
+                    <p class="text-sm text-gray-400 mb-4">Выберите клиентов. Сообщение получат только те, у кого привязан Telegram.</p>
+
+                    <div class="border border-gray-200 rounded-xl overflow-hidden">
+                        <div class="bg-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-100">
+                            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                                <input type="checkbox" id="bc-select-all" onchange="toggleSelectAllBroadcast()"
+                                    class="w-4 h-4 accent-purple-600 cursor-pointer">
+                                <span class="text-sm font-semibold text-gray-700">Выбрать всех</span>
+                            </label>
+                            <span id="bc-selected-count" class="text-xs text-purple-600 font-semibold"></span>
+                        </div>
+                        <div class="px-3 py-2 border-b border-gray-100">
+                            <input type="text" id="bc-search" placeholder="Поиск по имени или телефону..."
+                                oninput="filterBroadcastList()"
+                                class="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:border-purple-400">
+                        </div>
+                        <div id="bc-customer-list" class="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                            <div class="text-center text-gray-400 text-sm py-6">Загрузка клиентов...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Составление сообщения -->
+        <div class="bg-white rounded-2xl shadow-sm p-5">
+            <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center flex-shrink-0">
+                    <i data-lucide="message-square" class="w-5 h-5 text-purple-500"></i>
+                </div>
+                <div class="flex-1">
+                    <h2 class="font-bold text-gray-800 mb-1">Сообщение</h2>
+                    <p class="text-sm text-gray-400 mb-4">Поддерживается форматирование Telegram: *жирный*, _курсив_</p>
+
+                    <textarea id="bc-message" rows="5" placeholder="Текст рекламного сообщения..."
+                        oninput="updateBroadcastPreview()"
+                        class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:border-purple-500 mb-4"></textarea>
+
+                    <!-- Загрузка изображения -->
+                    <div class="mb-4">
+                        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Изображение (необязательно)</label>
+
+                        <div id="bc-drop-zone"
+                            onclick="document.getElementById('bc-image-input').click()"
+                            ondragover="event.preventDefault(); this.classList.add('border-purple-400','bg-purple-50')"
+                            ondragleave="this.classList.remove('border-purple-400','bg-purple-50')"
+                            ondrop="handleBroadcastDrop(event)"
+                            class="border-2 border-dashed border-gray-200 rounded-xl p-5 text-center cursor-pointer hover:border-purple-400 hover:bg-purple-50 transition-colors">
+                            <i data-lucide="image-plus" class="w-8 h-8 text-gray-300 mx-auto mb-2"></i>
+                            <p class="text-sm text-gray-400">Нажмите или перетащите изображение</p>
+                            <p class="text-xs text-gray-300 mt-1">JPG, PNG, GIF · до 5 МБ</p>
+                        </div>
+                        <input type="file" id="bc-image-input" accept="image/*" class="hidden" onchange="handleBroadcastImageSelect(event)">
+
+                        <!-- Превью изображения -->
+                        <div id="bc-image-preview" class="hidden mt-3 relative">
+                            <img id="bc-preview-img" src="" alt="Превью" class="w-full max-h-52 object-cover rounded-xl border border-gray-200">
+                            <button onclick="clearBroadcastImage()"
+                                class="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 text-white rounded-full flex items-center justify-center transition-colors">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <p class="text-xs text-gray-400 mt-1.5" id="bc-image-name"></p>
+                        </div>
+                    </div>
+
+                    <!-- Предпросмотр текста -->
+                    <div id="bc-preview-box" class="hidden mb-4 p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                        <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Предпросмотр</p>
+                        <p id="bc-preview-text" class="text-sm text-gray-700 whitespace-pre-wrap break-words"></p>
+                    </div>
+
+                    <p id="bc-error" class="text-red-500 text-sm mb-3 hidden"></p>
+
+                    <button onclick="submitBroadcast()" id="bc-send-btn"
+                        class="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold px-6 py-3 rounded-xl text-sm transition-colors inline-flex items-center gap-2">
+                        <i data-lucide="send" class="w-4 h-4"></i>
+                        Отправить рассылку
+                    </button>
+
+                    <div id="bc-result" class="hidden mt-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm"></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+</main>
+
+<script>
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let activeTab      = 'dashboard';
+let searchTimer    = null;
+let customersData  = [];
+let accrueCustomers = [];
+let kidsSorted     = false;
+
+const ICON_UNSORTED = `<path d="M12 5v14M5 12l7-7 7 7"/><path d="M5 12l7 7 7-7"/>`;
+const ICON_SORTED   = `<path d="M12 19V5M5 12l7-7 7 7"/>`;
+
+// ─── TAB SWITCHING ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    activeTab = tab;
+    ['dashboard','customers','transactions','staff','settings','broadcast'].forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        const cnt = document.getElementById(`content-${t}`);
+        if (!btn) return;
+        if (t === tab) {
+            btn.classList.add('active','text-purple-700');
+            btn.classList.remove('text-gray-500');
+            cnt.classList.remove('hidden');
+            cnt.classList.add('fade');
+        } else {
+            btn.classList.remove('active','text-purple-700');
+            btn.classList.add('text-gray-500');
+            cnt.classList.add('hidden');
+        }
+    });
+
+    if (tab === 'dashboard')    { loadStats(); loadRecentTx(); }
+    if (tab === 'customers')    loadCustomers();
+    if (tab === 'transactions') loadTransactions();
+    if (tab === 'staff')        loadStaff();
+    if (tab === 'settings')     loadSettings();
+    if (tab === 'broadcast')    loadBroadcastCustomers();
+}
+
+function refreshAll() {
+    if (activeTab === 'dashboard')    { loadStats(); loadRecentTx(); }
+    if (activeTab === 'customers')    loadCustomers();
+    if (activeTab === 'transactions') loadTransactions();
+    if (activeTab === 'staff')        loadStaff();
+    if (activeTab === 'settings')     loadSettings();
+    if (activeTab === 'broadcast')    loadBroadcastCustomers();
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+async function loadStats() {
+    const grid = document.getElementById('stats-grid');
+    try {
+        const r = await fetch('/admin/stats/');
+        if (!r.ok) throw new Error();
+        const s = await r.json();
+
+        const cards = [
+            { label: 'Клиентов всего',    value: s.total_customers,           icon: 'users',        color: 'blue' },
+            { label: 'Активных кассиров', value: s.active_cashiers,           icon: 'user-check',   color: 'purple' },
+            { label: 'Начислено сегодня', value: `+${s.bonuses_issued_today}`, icon: 'trending-up',  color: 'green' },
+            { label: 'Списано сегодня',   value: `-${s.bonuses_spent_today}`,  icon: 'trending-down',color: 'red' },
+            { label: 'Бонусов в обороте', value: s.total_bonus_balance,        icon: 'wallet',       color: 'amber' },
+        ];
+
+        const colorMap = {
+            blue:   { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-100',   icon: 'text-blue-400' },
+            purple: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-100', icon: 'text-purple-400' },
+            green:  { bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-100',  icon: 'text-green-400' },
+            red:    { bg: 'bg-red-50',    text: 'text-red-700',    border: 'border-red-100',    icon: 'text-red-400' },
+            amber:  { bg: 'bg-amber-50',  text: 'text-amber-700',  border: 'border-amber-100',  icon: 'text-amber-400' },
+        };
+
+        grid.innerHTML = cards.map(c => {
+            const cm = colorMap[c.color];
+            return `
+            <div class="bg-white rounded-2xl shadow-sm p-5 border ${cm.border}">
+                <div class="w-9 h-9 rounded-lg ${cm.bg} flex items-center justify-center mb-3">
+                    <i data-lucide="${c.icon}" class="w-5 h-5 ${cm.icon}"></i>
+                </div>
+                <p class="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-1">${c.label}</p>
+                <p class="text-2xl font-extrabold ${cm.text}">${c.value}</p>
+            </div>`;
+        }).join('');
+        lucide.createIcons();
+    } catch {
+        grid.innerHTML = `<div class="col-span-2 lg:col-span-5 text-center text-red-400 py-6 text-sm">Ошибка загрузки статистики</div>`;
+    }
+}
+
+async function loadRecentTx() {
+    const el = document.getElementById('recent-tx');
+    try {
+        const r = await fetch('/admin/transactions/?per_page=5');
+        if (!r.ok) throw new Error();
+        const data = await r.json();
+        const items = data.items;
+        if (!items.length) { el.innerHTML = '<p class="text-gray-400 text-sm">Операций пока нет</p>'; return; }
+        el.innerHTML = `<div class="overflow-x-auto">` + txTable(items) + `</div>`;
+    } catch {
+        el.innerHTML = '<p class="text-red-400 text-sm">Ошибка загрузки</p>';
+    }
+}
+
+// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
+async function loadCustomers(search = '') {
+    const tbody = document.getElementById('customers-table');
+    const count = document.getElementById('customers-count');
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-gray-400 py-10 text-sm">Загрузка...</td></tr>`;
+
+    // Сбрасываем сортировку при новом поиске
+    kidsSorted = false;
+    document.getElementById('kids-sort-icon').innerHTML = ICON_UNSORTED;
+    document.getElementById('th-kids').classList.remove('text-purple-600');
+
+    try {
+        const url = search ? `/admin/customers/?search=${encodeURIComponent(search)}` : '/admin/customers/';
+        const r = await fetch(url);
+        if (!r.ok) throw new Error();
+        customersData = await r.json();
+
+        if (!customersData.length) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center text-gray-400 py-10 text-sm">${search ? 'Ничего не найдено' : 'Клиентов пока нет'}</td></tr>`;
+            count.textContent = '';
+            return;
+        }
+
+        renderCustomerRows(customersData);
+        count.textContent = `Показано: ${customersData.length} клиентов`;
+    } catch {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-red-400 py-10 text-sm">Ошибка загрузки</td></tr>`;
+    }
+}
+
+function renderCustomerRows(list) {
+    const tbody = document.getElementById('customers-table');
+    tbody.innerHTML = list.map(c => {
+        const hasKids = c.kids && c.kids.length > 0;
+
+        // Для каждого ребёнка считаем дни до ближайшего ДР и подсвечиваем самого ближайшего
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+
+        const kidsWithDays = hasKids ? c.kids.map(k => {
+            const days = daysUntilBirthday(k.birth_date);
+            return { ...k, days };
+        }) : [];
+
+        const minDays = hasKids ? Math.min(...kidsWithDays.map(k => k.days)) : Infinity;
+
+        const kidsBadge = hasKids
+            ? `<button onclick="toggleKids(${c.id}, event)"
+                   class="inline-flex items-center gap-1 bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-semibold px-2.5 py-1 rounded-full transition-colors select-none">
+                   ${c.kids_count}
+                   <i id="chevron-${c.id}" data-lucide="chevron-down" class="w-3 h-3 transition-transform duration-200"></i>
+               </button>`
+            : '<span class="text-gray-300 text-xs">—</span>';
+
+        const kidsRow = hasKids ? `
+            <tr id="kids-row-${c.id}" class="hidden bg-purple-50 border-b border-purple-100">
+                <td colspan="6" class="px-6 py-3">
+                    <div class="flex flex-wrap gap-2">
+                        ${kidsWithDays.map(k => {
+                            const isNearest  = k.days === minDays;
+                            const daysLabel  = k.days === 0 ? '🎂 сегодня!'
+                                             : k.days <= 7  ? `через ${k.days} д.`
+                                             : k.days <= 30 ? `через ${k.days} д.`
+                                             : '';
+                            const highlight  = isNearest && k.days <= 30
+                                ? 'border-amber-300 bg-amber-50'
+                                : 'border-purple-100 bg-white';
+                            return `
+                                <span class="inline-flex items-center gap-2 border ${highlight} rounded-xl px-3 py-1.5 text-xs shadow-sm">
+                                    <span>${k.gender === 'girl' ? '👧' : '👦'}</span>
+                                    <span class="font-semibold text-gray-800">${esc(k.name)}</span>
+                                    <span class="text-gray-400">${fmtBirthDate(k.birth_date)}</span>
+                                    ${daysLabel ? `<span class="text-amber-600 font-semibold">${daysLabel}</span>` : ''}
+                                </span>`;
+                        }).join('')}
+                    </div>
+                </td>
+            </tr>` : '';
+
+        return `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 text-gray-400 text-xs">${c.id}</td>
+                <td class="px-4 py-3 font-medium text-gray-800">${esc(c.full_name || '—')}</td>
+                <td class="px-4 py-3 text-gray-500">${esc(c.phone || '—')}</td>
+                <td class="px-4 py-3 text-right font-bold text-purple-700">${c.balance}</td>
+                <td class="px-4 py-3 text-center">${kidsBadge}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs">${fmtDate(c.created_at)}</td>
+            </tr>
+            ${kidsRow}`;
+    }).join('');
+    lucide.createIcons();
+}
+
+function sortByBirthday() {
+    kidsSorted = !kidsSorted;
+    const icon = document.getElementById('kids-sort-icon');
+    const th   = document.getElementById('th-kids');
+
+    if (kidsSorted) {
+        const sorted = [...customersData].sort((a, b) => {
+            const da = a.kids?.length ? Math.min(...a.kids.map(k => daysUntilBirthday(k.birth_date))) : Infinity;
+            const db = b.kids?.length ? Math.min(...b.kids.map(k => daysUntilBirthday(k.birth_date))) : Infinity;
+            return da - db;
+        });
+        icon.innerHTML = ICON_SORTED;
+        th.classList.add('text-purple-600');
+        renderCustomerRows(sorted);
+    } else {
+        icon.innerHTML = ICON_UNSORTED;
+        th.classList.remove('text-purple-600');
+        renderCustomerRows(customersData);
+    }
+}
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+        loadCustomers(document.getElementById('customer-search').value.trim());
+    }, 400);
+}
+
+// ─── TRANSACTIONS ─────────────────────────────────────────────────────────────
+let txPage      = 1;
+let txPerPage   = 25;
+let txSearch    = '';
+let txType      = '';
+let txDateFrom  = '';
+let txDateTo    = '';
+let txTotal     = 0;
+let txTotalPages = 1;
+
+async function loadTransactions() {
+    const tbody = document.getElementById('transactions-table');
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-gray-400 py-10 text-sm">Загрузка...</td></tr>`;
+    document.getElementById('tx-pagination').innerHTML = '';
+
+    const params = new URLSearchParams({ page: txPage, per_page: txPerPage });
+    if (txSearch)   params.set('search',    txSearch);
+    if (txType)     params.set('tx_type',   txType);
+    if (txDateFrom) params.set('date_from', txDateFrom);
+    if (txDateTo)   params.set('date_to',   txDateTo);
+
+    try {
+        const r = await fetch(`/admin/transactions/?${params}`);
+        if (!r.ok) throw new Error();
+        const data = await r.json();
+
+        txTotal      = data.total;
+        txTotalPages = data.total_pages;
+
+        if (!data.items.length) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-gray-400 py-10 text-sm">Операций не найдено</td></tr>`;
+        } else {
+            tbody.innerHTML = txRows(data.items);
+        }
+        renderTxPagination();
+    } catch {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-red-400 py-10 text-sm">Ошибка загрузки</td></tr>`;
+    }
+}
+
+function applyTxFilters() {
+    txPage     = 1;
+    txSearch   = document.getElementById('tx-search').value.trim();
+    txType     = document.getElementById('tx-type-filter').value;
+    txDateFrom = document.getElementById('tx-date-from').value;
+    txDateTo   = document.getElementById('tx-date-to').value;
+    txPerPage  = parseInt(document.getElementById('tx-per-page').value);
+    loadTransactions();
+}
+
+function resetTxFilters() {
+    txPage = 1; txSearch = ''; txType = ''; txDateFrom = ''; txDateTo = ''; txPerPage = 25;
+    document.getElementById('tx-search').value      = '';
+    document.getElementById('tx-type-filter').value = '';
+    document.getElementById('tx-date-from').value   = '';
+    document.getElementById('tx-date-to').value     = '';
+    document.getElementById('tx-per-page').value    = '25';
+    loadTransactions();
+}
+
+function goToTxPage(page) {
+    if (page < 1 || page > txTotalPages) return;
+    txPage = page;
+    loadTransactions();
+}
+
+function getTxPageRange(current, total) {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    if (current <= 4) return [1, 2, 3, 4, 5, '…', total];
+    if (current >= total - 3) return [1, '…', total-4, total-3, total-2, total-1, total];
+    return [1, '…', current-1, current, current+1, '…', total];
+}
+
+function renderTxPagination() {
+    const el = document.getElementById('tx-pagination');
+    if (!el) return;
+
+    const from = txTotal === 0 ? 0 : (txPage - 1) * txPerPage + 1;
+    const to   = Math.min(txPage * txPerPage, txTotal);
+
+    const pageButtons = getTxPageRange(txPage, txTotalPages).map(p => {
+        if (p === '…') return `<span class="px-1.5 text-gray-400 text-sm select-none">…</span>`;
+        const active = p === txPage
+            ? 'bg-purple-600 text-white border-purple-600'
+            : 'bg-white text-gray-700 hover:bg-purple-50 border-gray-200';
+        return `<button onclick="goToTxPage(${p})"
+            class="w-9 h-9 rounded-lg border text-sm font-semibold transition-colors ${active}">${p}</button>`;
+    }).join('');
+
+    el.innerHTML = `
+        <span class="text-xs text-gray-400 whitespace-nowrap">
+            ${txTotal === 0 ? 'Нет данных' : `${from}–${to} из ${txTotal}`}
+        </span>
+        <div class="flex items-center gap-1 flex-wrap">
+            <button onclick="goToTxPage(${txPage - 1})" ${txPage <= 1 ? 'disabled' : ''}
+                class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <i data-lucide="chevron-left" class="w-4 h-4"></i>
+            </button>
+            ${pageButtons}
+            <button onclick="goToTxPage(${txPage + 1})" ${txPage >= txTotalPages ? 'disabled' : ''}
+                class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <i data-lucide="chevron-right" class="w-4 h-4"></i>
+            </button>
+        </div>`;
+    lucide.createIcons();
+}
+
+async function exportToExcel() {
+    const btn = document.getElementById('export-excel-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline-block mr-1"></i> Загрузка...';
+    lucide.createIcons();
+
+    const params = new URLSearchParams({ export: 'true' });
+    if (txSearch)   params.set('search',    txSearch);
+    if (txType)     params.set('tx_type',   txType);
+    if (txDateFrom) params.set('date_from', txDateFrom);
+    if (txDateTo)   params.set('date_to',   txDateTo);
+
+    try {
+        const r = await fetch(`/admin/transactions/?${params}`);
+        if (!r.ok) throw new Error();
+        const data = await r.json();
+
+        const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная' };
+        const rows = data.items.map(tx => ({
+            'ID':       tx.id,
+            'Дата':     fmtDateTime(tx.created_at),
+            'Клиент':   tx.customer_name  || '—',
+            'Телефон':  tx.customer_phone || '—',
+            'Сумма':    tx.amount,
+            'Тип':      typeLabels[tx.type] ?? tx.type,
+            'Кассир':   tx.cashier_name   || '—',
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [
+            { wch: 6 }, { wch: 18 }, { wch: 24 }, { wch: 16 },
+            { wch: 10 }, { wch: 14 }, { wch: 20 },
+        ];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Транзакции');
+        const date = new Date().toISOString().slice(0, 10);
+        XLSX.writeFile(wb, `transactions_${date}.xlsx`);
+    } catch {
+        alert('Ошибка при экспорте данных');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Экспорт в Excel';
+    lucide.createIcons();
+}
+
+function txTable(items) {
+    return `
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50"><tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                <th class="px-4 py-2.5 font-semibold">Дата</th>
+                <th class="px-4 py-2.5 font-semibold">Клиент</th>
+                <th class="px-4 py-2.5 font-semibold text-right">Сумма</th>
+                <th class="px-4 py-2.5 font-semibold">Тип</th>
+                <th class="px-4 py-2.5 font-semibold">Кассир</th>
+            </tr></thead>
+            <tbody class="divide-y divide-gray-50">${txRows(items)}</tbody>
+        </table>`;
+}
+
+function txRows(items) {
+    const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная' };
+    return items.map(tx => {
+        const pos   = tx.amount > 0;
+        const color = pos ? 'text-green-600' : 'text-red-500';
+        const label = typeLabels[tx.type] ?? tx.type;
+        return `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">${fmtDateTime(tx.created_at)}</td>
+                <td class="px-4 py-3">
+                    <p class="font-medium text-gray-800 text-sm">${esc(tx.customer_name || '—')}</p>
+                    <p class="text-xs text-gray-400">${esc(tx.customer_phone || '')}</p>
+                </td>
+                <td class="px-4 py-3 text-right font-bold ${color}">${pos ? '+' : ''}${tx.amount}</td>
+                <td class="px-4 py-3 text-xs text-gray-500">${label}</td>
+                <td class="px-4 py-3 text-xs text-gray-500">${esc(tx.cashier_name || '—')}</td>
+            </tr>`;
+    }).join('');
+}
+
+// ─── STAFF ────────────────────────────────────────────────────────────────────
+async function loadStaff() {
+    const tbody = document.getElementById('staff-table');
+    try {
+        const r = await fetch('/admin/staff/');
+        if (!r.ok) throw new Error();
+        const staff = await r.json();
+
+        if (!staff.length) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-gray-400 py-10 text-sm">Персонал не добавлен</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = staff.map(s => {
+            const badge = s.tg_id
+                ? (s.is_active
+                    ? '<span class="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs px-2.5 py-1 rounded-full font-medium">● Активен</span>'
+                    : '<span class="inline-flex items-center gap-1 bg-gray-100 text-gray-500 text-xs px-2.5 py-1 rounded-full font-medium">● Деактивирован</span>')
+                : '<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-xs px-2.5 py-1 rounded-full font-medium">◌ Ожидает подтв.</span>';
+            const role = s.role === 'admin' ? 'Администратор' : 'Кассир';
+            const action = s.is_active
+                ? `<button onclick="deactivateStaff(${s.id})" class="text-red-400 hover:text-red-600 text-xs font-medium transition-colors">Деактивировать</button>`
+                : '<span class="text-gray-300 text-xs">—</span>';
+            return `
+                <tr class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-3 font-medium text-gray-800">${esc(s.name)}</td>
+                    <td class="px-4 py-3 text-gray-500 text-sm">${s.tg_username ? '@'+esc(s.tg_username) : '—'}</td>
+                    <td class="px-4 py-3 text-gray-600 text-sm">${role}</td>
+                    <td class="px-4 py-3">${badge}</td>
+                    <td class="px-4 py-3 text-right">${action}</td>
+                </tr>`;
+        }).join('');
+    } catch {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-red-400 py-10 text-sm">Ошибка загрузки</td></tr>`;
+    }
+}
+
+async function addStaff() {
+    const name     = document.getElementById('staff-name').value.trim();
+    const username = document.getElementById('staff-username').value.trim().replace(/^@/, '');
+    const errEl    = document.getElementById('staff-add-error');
+    const btn      = document.getElementById('add-staff-btn');
+
+    if (!name || !username) { errEl.textContent = 'Заполните оба поля'; errEl.classList.remove('hidden'); return; }
+    errEl.classList.add('hidden');
+    document.getElementById('invite-section').classList.add('hidden');
+
+    btn.disabled = true; btn.textContent = 'Добавляем...';
+    try {
+        const r = await fetch('/admin/staff/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, tg_username: username, role: 'cashier' })
+        });
+        if (r.ok) {
+            const data = await r.json();
+            document.getElementById('invite-link').value = data.invite_link;
+            document.getElementById('invite-section').classList.remove('hidden');
+            lucide.createIcons();
+            document.getElementById('staff-name').value = '';
+            document.getElementById('staff-username').value = '';
+            loadStaff();
+        } else {
+            const err = await r.json();
+            errEl.textContent = err.detail || 'Ошибка при добавлении';
+            errEl.classList.remove('hidden');
+        }
+    } catch { errEl.textContent = 'Нет связи с сервером'; errEl.classList.remove('hidden'); }
+    btn.disabled = false; btn.textContent = '+ Добавить';
+}
+
+async function deactivateStaff(id) {
+    if (!confirm('Деактивировать этого сотрудника?')) return;
+    await fetch(`/admin/staff/${id}/deactivate`, { method: 'PATCH' });
+    loadStaff();
+}
+
+function copyInvite() {
+    navigator.clipboard.writeText(document.getElementById('invite-link').value).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Скопировано';
+        setTimeout(() => btn.textContent = 'Копировать', 2500);
+    });
+}
+
+// ─── SETTINGS ────────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+    try {
+        const r = await fetch('/admin/settings/');
+        if (!r.ok) throw new Error();
+        const s = await r.json();
+        document.getElementById('reg-bonus-input').value = s.registration_bonus ?? '500';
+        document.getElementById('whatsapp-url-input').value = s.whatsapp_url ?? '';
+    } catch {
+        const st = document.getElementById('reg-bonus-status');
+        st.textContent = 'Ошибка загрузки настроек';
+        st.className = 'text-sm mt-2 text-red-500';
+        st.classList.remove('hidden');
+    }
+    loadAccrueCustomers();
+}
+
+async function saveRegBonus() {
+    const input  = document.getElementById('reg-bonus-input');
+    const btn    = document.getElementById('reg-bonus-btn');
+    const status = document.getElementById('reg-bonus-status');
+    const val    = parseInt(input.value);
+
+    if (isNaN(val) || val < 0) {
+        status.textContent = 'Введите целое число ≥ 0';
+        status.className = 'text-sm mt-2 text-red-500';
+        status.classList.remove('hidden');
+        return;
+    }
+    status.classList.add('hidden');
+    btn.disabled = true; btn.textContent = 'Сохранение...';
+
+    try {
+        const r = await fetch('/admin/settings/registration_bonus', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: String(val) })
+        });
+        if (r.ok) {
+            status.textContent = val === 0
+                ? 'Сохранено. Бонус за регистрацию отключён.'
+                : `Сохранено. Бонус за регистрацию: ${val} бонусов.`;
+            status.className = 'text-sm mt-2 text-green-600';
+        } else {
+            status.textContent = 'Ошибка при сохранении';
+            status.className = 'text-sm mt-2 text-red-500';
+        }
+        status.classList.remove('hidden');
+    } catch {
+        status.textContent = 'Нет связи с сервером';
+        status.className = 'text-sm mt-2 text-red-500';
+        status.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.textContent = 'Сохранить';
+}
+
+async function saveWhatsappUrl() {
+    const input  = document.getElementById('whatsapp-url-input');
+    const btn    = document.getElementById('whatsapp-url-btn');
+    const status = document.getElementById('whatsapp-url-status');
+    const url    = input.value.trim();
+
+    if (url) {
+        try {
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+        } catch {
+            status.textContent = 'Введите корректный адрес';
+            status.className = 'text-sm mt-2 text-red-500';
+            status.classList.remove('hidden');
+            return;
+        }
+    }
+    status.classList.add('hidden');
+    btn.disabled = true; btn.textContent = 'Сохранение...';
+
+    try {
+        const r = await fetch('/admin/settings/whatsapp_url', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: url })
+        });
+        if (r.ok) {
+            status.textContent = url ? 'Сохранено. Кнопка WhatsApp активна.' : 'Сохранено. Кнопка WhatsApp скрыта.';
+            status.className = 'text-sm mt-2 text-green-600';
+        } else {
+            const err = await r.json().catch(() => ({}));
+            status.textContent = err.detail || 'Ошибка при сохранении';
+            status.className = 'text-sm mt-2 text-red-500';
+        }
+        status.classList.remove('hidden');
+    } catch {
+        status.textContent = 'Нет связи с сервером';
+        status.className = 'text-sm mt-2 text-red-500';
+        status.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.textContent = 'Сохранить';
+}
+
+// ─── ACCRUAL ─────────────────────────────────────────────────────────────────
+
+async function loadAccrueCustomers() {
+    const list = document.getElementById('accrue-customer-list');
+    try {
+        const r = await fetch('/admin/customers/');
+        if (!r.ok) throw new Error();
+        accrueCustomers = await r.json();
+        renderAccrueList(accrueCustomers);
+    } catch {
+        list.innerHTML = '<div class="text-center text-red-400 text-sm py-6">Ошибка загрузки клиентов</div>';
+    }
+}
+
+function renderAccrueList(customers) {
+    const list = document.getElementById('accrue-customer-list');
+    if (!customers.length) {
+        list.innerHTML = '<div class="text-center text-gray-400 text-sm py-6">Клиентов нет</div>';
+        updateSelectedCount(); return;
+    }
+    list.innerHTML = customers.map(c => `
+        <label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors">
+            <input type="checkbox" class="accrue-checkbox w-4 h-4 accent-purple-600 cursor-pointer"
+                data-id="${c.id}" onchange="updateSelectedCount()">
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-800 truncate">${esc(c.full_name || '—')}</p>
+                <p class="text-xs text-gray-400">${esc(c.phone || '')}</p>
+            </div>
+            <span class="text-xs font-semibold text-purple-600 flex-shrink-0">${c.balance} б.</span>
+        </label>
+    `).join('');
+    updateSelectedCount();
+}
+
+function filterAccrueList() {
+    const q = document.getElementById('accrue-search').value.toLowerCase();
+    renderAccrueList(accrueCustomers.filter(c =>
+        (c.full_name || '').toLowerCase().includes(q) || (c.phone || '').includes(q)
+    ));
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('select-all-customers').checked;
+    document.querySelectorAll('.accrue-checkbox').forEach(cb => cb.checked = checked);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const total    = document.querySelectorAll('.accrue-checkbox').length;
+    const selected = document.querySelectorAll('.accrue-checkbox:checked').length;
+    const countEl  = document.getElementById('selected-count');
+    const allCb    = document.getElementById('select-all-customers');
+
+    countEl.textContent = selected > 0 ? `Выбрано: ${selected} из ${total}` : '';
+    allCb.indeterminate = selected > 0 && selected < total;
+    allCb.checked = total > 0 && selected === total;
+    updateAccruePreview();
+}
+
+function updateAccruePreview() {
+    const selected = document.querySelectorAll('.accrue-checkbox:checked').length;
+    const amount   = parseInt(document.getElementById('accrue-amount').value) || 0;
+    const preview  = document.getElementById('accrue-preview');
+
+    if (selected > 0 && amount > 0) {
+        preview.innerHTML =
+            `<span class="text-purple-700 font-semibold">${selected}</span> клиент${plural(selected)} × ` +
+            `<span class="text-green-600 font-semibold">+${amount}</span> бонусов = ` +
+            `<span class="font-bold text-gray-800">${selected * amount}</span> бонусов суммарно`;
+        preview.classList.remove('hidden');
+    } else {
+        preview.classList.add('hidden');
+    }
+}
+
+function plural(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return '';
+    if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'а';
+    return 'ов';
+}
+
+async function submitAccrue() {
+    const ids    = [...document.querySelectorAll('.accrue-checkbox:checked')].map(cb => parseInt(cb.dataset.id));
+    const amount = parseInt(document.getElementById('accrue-amount').value);
+    const errEl  = document.getElementById('accrue-error');
+    const btn    = document.getElementById('accrue-btn');
+    const resEl  = document.getElementById('accrue-result');
+
+    errEl.classList.add('hidden');
+    resEl.classList.add('hidden');
+
+    if (!ids.length)          { errEl.textContent = 'Выберите хотя бы одного клиента'; errEl.classList.remove('hidden'); return; }
+    if (!amount || amount < 1) { errEl.textContent = 'Введите сумму начисления (целое число > 0)'; errEl.classList.remove('hidden'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Начисляем...';
+    lucide.createIcons();
+
+    try {
+        const r = await fetch('/admin/bonus/accrue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customer_ids: ids, amount })
+        });
+
+        if (r.ok) {
+            const data = await r.json();
+            resEl.innerHTML =
+                `<div class="flex items-center gap-2 text-green-700 font-semibold mb-1">` +
+                `<i data-lucide="check-circle" class="w-4 h-4"></i> Начисление выполнено!</div>` +
+                `<p class="text-green-600">${data.accrued_count} клиент${plural(data.accrued_count)} × ${amount} бонусов = ` +
+                `<strong>${data.total_amount}</strong> бонусов суммарно.</p>`;
+            resEl.classList.remove('hidden');
+            lucide.createIcons();
+            document.getElementById('accrue-amount').value = '';
+            document.getElementById('select-all-customers').checked = false;
+            loadAccrueCustomers();
+        } else {
+            const err = await r.json();
+            errEl.textContent = err.detail || 'Ошибка при начислении';
+            errEl.classList.remove('hidden');
+        }
+    } catch {
+        errEl.textContent = 'Нет связи с сервером';
+        errEl.classList.remove('hidden');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="zap" class="w-4 h-4"></i> Начислить бонусы';
+    lucide.createIcons();
+}
+
+// ─── BROADCAST ────────────────────────────────────────────────────────────────
+let broadcastCustomers = [];
+let broadcastImageFile = null;
+
+async function loadBroadcastCustomers() {
+    const list = document.getElementById('bc-customer-list');
+    try {
+        const r = await fetch('/admin/customers/');
+        if (!r.ok) throw new Error();
+        broadcastCustomers = await r.json();
+        renderBroadcastList(broadcastCustomers);
+    } catch {
+        list.innerHTML = '<div class="text-center text-red-400 text-sm py-6">Ошибка загрузки клиентов</div>';
+    }
+}
+
+function renderBroadcastList(customers) {
+    const list = document.getElementById('bc-customer-list');
+    if (!customers.length) {
+        list.innerHTML = '<div class="text-center text-gray-400 text-sm py-6">Клиентов нет</div>';
+        updateBroadcastSelectedCount();
+        return;
+    }
+    list.innerHTML = customers.map(c => {
+        const tgBadge = c.tg_id
+            ? '<span class="text-xs text-blue-500 flex-shrink-0 font-semibold">TG ✓</span>'
+            : '<span class="text-xs text-gray-300 flex-shrink-0">нет TG</span>';
+        return `
+        <label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors">
+            <input type="checkbox" class="bc-checkbox w-4 h-4 accent-purple-600 cursor-pointer"
+                data-id="${c.id}" onchange="updateBroadcastSelectedCount()">
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-800 truncate">${esc(c.full_name || '—')}</p>
+                <p class="text-xs text-gray-400">${esc(c.phone || '')}</p>
+            </div>
+            ${tgBadge}
+        </label>`;
+    }).join('');
+    updateBroadcastSelectedCount();
+}
+
+function filterBroadcastList() {
+    const q = document.getElementById('bc-search').value.toLowerCase();
+    renderBroadcastList(broadcastCustomers.filter(c =>
+        (c.full_name || '').toLowerCase().includes(q) || (c.phone || '').includes(q)
+    ));
+}
+
+function toggleSelectAllBroadcast() {
+    const checked = document.getElementById('bc-select-all').checked;
+    document.querySelectorAll('.bc-checkbox').forEach(cb => cb.checked = checked);
+    updateBroadcastSelectedCount();
+}
+
+function updateBroadcastSelectedCount() {
+    const total    = document.querySelectorAll('.bc-checkbox').length;
+    const selected = document.querySelectorAll('.bc-checkbox:checked').length;
+    const countEl  = document.getElementById('bc-selected-count');
+    const allCb    = document.getElementById('bc-select-all');
+    countEl.textContent = selected > 0 ? `Выбрано: ${selected} из ${total}` : '';
+    allCb.indeterminate = selected > 0 && selected < total;
+    allCb.checked = total > 0 && selected === total;
+}
+
+function handleBroadcastImageSelect(event) {
+    const file = event.target.files[0];
+    if (file) setBroadcastImage(file);
+}
+
+function handleBroadcastDrop(event) {
+    event.preventDefault();
+    document.getElementById('bc-drop-zone').classList.remove('border-purple-400', 'bg-purple-50');
+    const file = event.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) setBroadcastImage(file);
+}
+
+function setBroadcastImage(file) {
+    if (file.size > 5 * 1024 * 1024) {
+        alert('Файл слишком большой. Максимум 5 МБ.');
+        return;
+    }
+    broadcastImageFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById('bc-preview-img').src = e.target.result;
+        document.getElementById('bc-image-name').textContent = file.name;
+        document.getElementById('bc-image-preview').classList.remove('hidden');
+        document.getElementById('bc-drop-zone').classList.add('hidden');
+        lucide.createIcons();
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearBroadcastImage() {
+    broadcastImageFile = null;
+    document.getElementById('bc-image-input').value = '';
+    document.getElementById('bc-image-preview').classList.add('hidden');
+    document.getElementById('bc-drop-zone').classList.remove('hidden');
+}
+
+function updateBroadcastPreview() {
+    const text = document.getElementById('bc-message').value;
+    const box  = document.getElementById('bc-preview-box');
+    const prev = document.getElementById('bc-preview-text');
+    if (text.trim()) {
+        prev.textContent = text;
+        box.classList.remove('hidden');
+    } else {
+        box.classList.add('hidden');
+    }
+}
+
+async function submitBroadcast() {
+    const ids     = [...document.querySelectorAll('.bc-checkbox:checked')].map(cb => parseInt(cb.dataset.id));
+    const message = document.getElementById('bc-message').value.trim();
+    const errEl   = document.getElementById('bc-error');
+    const btn     = document.getElementById('bc-send-btn');
+    const resEl   = document.getElementById('bc-result');
+
+    errEl.classList.add('hidden');
+    resEl.classList.add('hidden');
+
+    if (!ids.length)  { errEl.textContent = 'Выберите хотя бы одного клиента'; errEl.classList.remove('hidden'); return; }
+    if (!message)     { errEl.textContent = 'Введите текст сообщения'; errEl.classList.remove('hidden'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Отправляем...';
+    lucide.createIcons();
+
+    try {
+        const formData = new FormData();
+        formData.append('customer_ids', JSON.stringify(ids));
+        formData.append('message', message);
+        if (broadcastImageFile) formData.append('image', broadcastImageFile);
+
+        const r = await fetch('/admin/broadcast/', { method: 'POST', body: formData });
+
+        if (r.ok) {
+            const data = await r.json();
+            const rows = [
+                `<p>✅ Отправлено: <strong class="text-green-700">${data.sent_count}</strong></p>`,
+                data.failed_count > 0 ? `<p>❌ Ошибок доставки: <strong class="text-red-500">${data.failed_count}</strong></p>` : '',
+                data.no_tg_count  > 0 ? `<p>⚠️ Без Telegram: <strong class="text-amber-600">${data.no_tg_count}</strong> (пропущено)</p>` : '',
+            ].filter(Boolean).join('');
+            resEl.innerHTML =
+                `<div class="flex items-center gap-2 text-green-700 font-semibold mb-2">` +
+                `<i data-lucide="check-circle" class="w-4 h-4"></i> Рассылка выполнена!</div>` +
+                `<div class="space-y-1 text-gray-600">${rows}</div>`;
+            resEl.classList.remove('hidden');
+            lucide.createIcons();
+            document.getElementById('bc-message').value = '';
+            document.getElementById('bc-preview-box').classList.add('hidden');
+            document.getElementById('bc-select-all').checked = false;
+            clearBroadcastImage();
+            loadBroadcastCustomers();
+        } else {
+            const err = await r.json();
+            errEl.textContent = err.detail || 'Ошибка при отправке';
+            errEl.classList.remove('hidden');
+        }
+    } catch {
+        errEl.textContent = 'Нет связи с сервером';
+        errEl.classList.remove('hidden');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i> Отправить рассылку';
+    lucide.createIcons();
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function esc(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtDate(iso) {
+    return new Date(iso).toLocaleDateString('ru-RU', { day:'numeric', month:'short', year:'numeric' });
+}
+function fmtDateTime(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('ru-RU', { day:'numeric', month:'short' }) + ' ' +
+           d.toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit' });
+}
+function fmtBirthDate(dateStr) {
+    if (!dateStr) return '';
+    return new Date(dateStr + 'T00:00:00').toLocaleDateString('ru-RU', { day:'numeric', month:'long', year:'numeric' });
+}
+function daysUntilBirthday(dateStr) {
+    if (!dateStr) return Infinity;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const birth = new Date(dateStr + 'T00:00:00');
+    let next = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+    if (next < today) next.setFullYear(today.getFullYear() + 1);
+    return Math.round((next - today) / 86400000);
+}
+function toggleKids(customerId, event) {
+    if (event) event.stopPropagation();
+    const row     = document.getElementById(`kids-row-${customerId}`);
+    const chevron = document.getElementById(`chevron-${customerId}`);
+    if (!row) return;
+    const isHidden = row.classList.toggle('hidden');
+    chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+lucide.createIcons();
+loadStats();
+loadRecentTx();
+</script>
+</body>
+</html>

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Терминал кассира — Funky Town</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- Шапка -->
+    <div class="bg-purple-700 text-white px-4 py-3 shadow-md flex items-center justify-between">
+        <div>
+            <h1 class="text-base font-bold leading-tight">Funky Town</h1>
+            <p class="text-xs opacity-70">Терминал кассира</p>
+        </div>
+        <span class="text-2xl">🎢</span>
+    </div>
+
+    <!-- ЭКРАН 1: Поиск клиента -->
+    <div id="screen-search" class="p-4">
+        <div class="bg-white rounded-2xl shadow p-5 mt-2">
+            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                Номер телефона клиента
+            </label>
+            <input
+                type="tel"
+                id="phone-input"
+                inputmode="numeric"
+                placeholder="+7 (___) ___-__-__"
+                class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg focus:outline-none focus:border-purple-500 mb-3"
+            >
+            <button
+                onclick="searchCustomer()"
+                id="search-btn"
+                class="w-full bg-purple-600 active:bg-purple-800 text-white font-bold py-3 rounded-xl text-base transition-colors"
+            >
+                Найти клиента
+            </button>
+            <p id="search-error" class="mt-3 text-red-500 text-sm text-center hidden"></p>
+        </div>
+    </div>
+
+    <!-- ЭКРАН 2: Карточка клиента + списание -->
+    <div id="screen-customer" class="p-4 hidden">
+
+        <!-- Карточка клиента -->
+        <div class="bg-white rounded-2xl shadow p-5 mb-3">
+            <div class="flex items-start justify-between">
+                <div class="flex-1 min-w-0 pr-3">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Клиент</p>
+                    <h2 id="customer-name" class="text-xl font-bold text-gray-800 truncate mt-0.5"></h2>
+                    <p id="customer-phone-display" class="text-sm text-gray-400 mt-0.5"></p>
+                </div>
+                <div class="text-right shrink-0">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Баланс</p>
+                    <p id="customer-balance" class="text-3xl font-extrabold text-purple-600 leading-tight"></p>
+                    <p class="text-xs text-gray-400">бонусов</p>
+                </div>
+            </div>
+
+            <!-- Дети -->
+            <div id="kids-section" class="mt-4 pt-3 border-t border-gray-100 hidden">
+                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Дети</p>
+                <div id="kids-list" class="flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+
+        <!-- Форма списания -->
+        <div class="bg-white rounded-2xl shadow p-5 mb-3">
+            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                Сумма к списанию
+            </label>
+            <input
+                type="number"
+                id="amount-input"
+                placeholder="Например: 500"
+                min="1"
+                class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-xl font-bold focus:outline-none focus:border-red-400 mb-3"
+            >
+            <button
+                onclick="processDeduction()"
+                id="deduct-btn"
+                class="w-full bg-red-500 active:bg-red-700 text-white font-bold py-3 rounded-xl text-base transition-colors"
+            >
+                💸 Списать бонусы
+            </button>
+            <p id="deduct-error" class="mt-3 text-red-500 text-sm text-center hidden"></p>
+        </div>
+
+        <button
+            onclick="resetSearch()"
+            class="w-full text-purple-600 text-sm py-2 font-medium"
+        >
+            ← Найти другого клиента
+        </button>
+    </div>
+
+    <!-- ЭКРАН 3: Успешное списание -->
+    <div id="screen-success" class="p-4 hidden">
+        <div class="bg-white rounded-2xl shadow p-6 mt-2 text-center">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span class="text-3xl">✅</span>
+            </div>
+            <h2 class="text-xl font-bold text-gray-800 mb-1">Списание выполнено</h2>
+            <p id="success-name" class="text-gray-400 text-sm mb-4"></p>
+
+            <div class="bg-gray-50 rounded-xl p-4 mb-5">
+                <p class="text-sm text-gray-500">Списано</p>
+                <p id="success-deducted" class="text-2xl font-extrabold text-red-500"></p>
+                <div class="border-t border-gray-200 my-3"></div>
+                <p class="text-sm text-gray-500">Новый остаток</p>
+                <p id="success-balance" class="text-2xl font-extrabold text-purple-600"></p>
+                <p class="text-xs text-gray-400">бонусов</p>
+            </div>
+
+            <p class="text-xs text-gray-400 mb-5">Клиент получил уведомление в Telegram</p>
+
+            <button
+                onclick="resetSearch()"
+                class="w-full bg-purple-600 active:bg-purple-800 text-white font-bold py-3 rounded-xl transition-colors"
+            >
+                Следующий клиент
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const CASHIER_TG_ID = parseInt(urlParams.get('tg_id') || '0');
+
+        let currentCustomer = null;
+        let CASHIER_DB_ID = null;
+
+        // Загружаем DB-id кассира по tg_id, чтобы фиксировать его в транзакции
+        (async function loadCashierId() {
+            if (!CASHIER_TG_ID) return;
+            try {
+                const r = await apiFetch(`/staff/tg/${CASHIER_TG_ID}`);
+                if (r.ok) {
+                    const staff = await r.json();
+                    CASHIER_DB_ID = staff.id;
+                }
+            } catch (_) {}
+        })();
+
+        // Обёртка над fetch: обходит ngrok-заглушку на iOS
+        function apiFetch(url, options = {}) {
+            const headers = {
+                'ngrok-skip-browser-warning': '1',
+                ...(options.headers || {})
+            };
+            return fetch(url, { ...options, headers });
+        }
+
+        function showScreen(name) {
+            ['search', 'customer', 'success'].forEach(s => {
+                document.getElementById(`screen-${s}`).classList.add('hidden');
+            });
+            document.getElementById(`screen-${name}`).classList.remove('hidden');
+        }
+
+        function showError(id, msg) {
+            const el = document.getElementById(id);
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
+        function hideError(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        async function searchCustomer() {
+            const phone = getCleanPhone();
+            if (!phone) {
+                showError('search-error', 'Введите полный номер (+7 и 10 цифр)');
+                return;
+            }
+            hideError('search-error');
+
+            const btn = document.getElementById('search-btn');
+            btn.disabled = true;
+            btn.textContent = 'Поиск...';
+
+            try {
+                const response = await apiFetch(`/customers/${encodeURIComponent(phone)}`);
+
+                if (response.ok) {
+                    currentCustomer = await response.json();
+                    renderCustomerCard(currentCustomer);
+                    showScreen('customer');
+                } else if (response.status === 404) {
+                    showError('search-error', 'Клиент не найден. Проверьте номер.');
+                } else {
+                    showError('search-error', 'Ошибка сервера. Попробуйте снова.');
+                }
+            } catch (e) {
+                showError('search-error', 'Нет связи с сервером.');
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Найти клиента';
+        }
+
+        function renderCustomerCard(customer) {
+            document.getElementById('customer-name').textContent = customer.full_name || 'Без имени';
+            document.getElementById('customer-phone-display').textContent = customer.phone;
+            document.getElementById('customer-balance').textContent = customer.balance;
+
+            const kidsSection = document.getElementById('kids-section');
+            const kidsList = document.getElementById('kids-list');
+
+            if (customer.kids && customer.kids.length > 0) {
+                kidsList.innerHTML = '';
+                customer.kids.forEach(kid => {
+                    const tag = document.createElement('span');
+                    tag.className = 'bg-purple-100 text-purple-700 text-sm px-3 py-1 rounded-full font-medium';
+                    const icon = kid.gender === 'girl' ? '👧' : '👦';
+                    tag.textContent = `${icon} ${kid.name}`;
+                    kidsList.appendChild(tag);
+                });
+                kidsSection.classList.remove('hidden');
+            } else {
+                kidsSection.classList.add('hidden');
+            }
+        }
+
+        async function processDeduction() {
+            const amount = parseInt(document.getElementById('amount-input').value);
+
+            if (!amount || amount <= 0) {
+                showError('deduct-error', 'Введите корректную сумму');
+                return;
+            }
+            if (amount > currentCustomer.balance) {
+                showError('deduct-error', `Недостаточно бонусов. Доступно: ${currentCustomer.balance}`);
+                return;
+            }
+            hideError('deduct-error');
+
+            const btn = document.getElementById('deduct-btn');
+            btn.disabled = true;
+            btn.textContent = 'Выполняется...';
+
+            try {
+                const txBody = {
+                    customer_phone: currentCustomer.phone,
+                    amount: -amount,
+                    cashier_id: CASHIER_DB_ID
+                };
+                const response = await apiFetch('/transactions/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(txBody)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    document.getElementById('success-name').textContent = currentCustomer.full_name || '';
+                    document.getElementById('success-deducted').textContent = `— ${amount} бонусов`;
+                    document.getElementById('success-balance').textContent = result.new_balance;
+                    showScreen('success');
+                } else {
+                    const error = await response.json();
+                    showError('deduct-error', error.detail || 'Ошибка при списании');
+                    btn.disabled = false;
+                    btn.textContent = '💸 Списать бонусы';
+                }
+            } catch (e) {
+                showError('deduct-error', 'Нет связи с сервером.');
+                btn.disabled = false;
+                btn.textContent = '💸 Списать бонусы';
+            }
+        }
+
+        function resetSearch() {
+            currentCustomer = null;
+            document.getElementById('phone-input').value = '';
+            document.getElementById('amount-input').value = '';
+            hideError('search-error');
+            hideError('deduct-error');
+            showScreen('search');
+        }
+
+        // ─── PHONE MASK ─────────────────────────────────────────────────
+        (function initPhoneMask() {
+            const input = document.getElementById('phone-input');
+
+            function applyMask(raw) {
+                let digits = raw.replace(/\D/g, '');
+                if (digits.startsWith('8')) digits = '7' + digits.slice(1);
+                if (digits.length > 0 && !digits.startsWith('7')) digits = '7' + digits;
+                digits = digits.slice(0, 11);
+
+                if (digits.length === 0) return '';
+                let out = '+7';
+                if (digits.length > 1) {
+                    out += ' (' + digits.slice(1, 4);
+                    if (digits.length > 4) {
+                        out += ') ' + digits.slice(4, 7);
+                        if (digits.length > 7) {
+                            out += '-' + digits.slice(7, 9);
+                            if (digits.length > 9) {
+                                out += '-' + digits.slice(9, 11);
+                            }
+                        }
+                    }
+                }
+                return out;
+            }
+
+            input.addEventListener('input', () => {
+                const prev = input.value.length;
+                input.value = applyMask(input.value);
+                if (input.value.length >= prev) {
+                    input.selectionStart = input.selectionEnd = input.value.length;
+                }
+            });
+
+            input.addEventListener('focus', () => {
+                if (!input.value) input.value = '+7';
+            });
+
+            input.addEventListener('blur', () => {
+                if (input.value === '+7') input.value = '';
+            });
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && input.value.length <= 2) {
+                    e.preventDefault();
+                }
+            });
+        })();
+
+        function getCleanPhone() {
+            const digits = document.getElementById('phone-input').value.replace(/\D/g, '');
+            return digits.length === 11 ? '+' + digits : null;
+        }
+        // ────────────────────────────────────────────────────────────────
+
+        document.getElementById('phone-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') searchCustomer();
+        });
+
+        document.getElementById('amount-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') processDeduction();
+        });
+    </script>
+</body>
+</html>

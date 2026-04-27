@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Funky Town</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tab-btn.active { color: #7C3AED; border-bottom-color: #7C3AED; }
+        .tab-btn { border-bottom: 2px solid transparent; transition: all .2s; }
+        .screen { animation: fadeUp .25s ease; }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .bounce span { animation: dot .9s infinite both; }
+        .bounce span:nth-child(2) { animation-delay: .15s; }
+        .bounce span:nth-child(3) { animation-delay: .30s; }
+        @keyframes dot { 0%,80%,100%{transform:scale(0)} 40%{transform:scale(1)} }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- ══════════════════════════ LOADING ══════════════════════════ -->
+    <div id="screen-loading" class="min-h-screen flex flex-col items-center justify-center bg-purple-700">
+        <div class="text-6xl mb-3 select-none">🎢</div>
+        <h1 class="text-2xl font-extrabold text-white tracking-tight">Funky Town</h1>
+        <div class="bounce flex gap-1.5 mt-5">
+            <span class="w-2 h-2 bg-purple-300 rounded-full inline-block"></span>
+            <span class="w-2 h-2 bg-purple-300 rounded-full inline-block"></span>
+            <span class="w-2 h-2 bg-purple-300 rounded-full inline-block"></span>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════ REGISTER ══════════════════════════ -->
+    <div id="screen-register" class="hidden screen">
+
+        <div class="bg-gradient-to-br from-purple-700 to-purple-900 text-white px-5 pt-10 pb-16">
+            <div class="text-4xl mb-3">🎢</div>
+            <h1 class="text-2xl font-extrabold">Привет!</h1>
+            <p class="text-purple-200 mt-1 text-sm">Создайте бонусную карту — это займёт минуту</p>
+        </div>
+
+        <div class="-mt-8 mx-4 bg-white rounded-2xl shadow-xl p-5 mb-6">
+            <h2 class="text-base font-bold text-gray-800 mb-4">Анкета гостя</h2>
+
+            <div class="mb-3">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Номер телефона *</label>
+                <input type="tel" id="reg-phone" inputmode="numeric" placeholder="+7 (___) ___-__-__"
+                    class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-base focus:outline-none focus:border-purple-500">
+            </div>
+
+            <div class="mb-5">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Ваше имя</label>
+                <input type="text" id="reg-name" placeholder="Иван Иванов"
+                    class="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-base focus:outline-none focus:border-purple-500">
+            </div>
+
+            <div class="border-t border-gray-100 pt-4 mb-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-gray-700">Дети (необязательно)</h3>
+                    <button onclick="addKid()" class="text-purple-600 text-sm font-semibold">+ Добавить</button>
+                </div>
+                <div id="kids-container" class="space-y-3"></div>
+            </div>
+
+            <p id="reg-error" class="text-red-500 text-sm mb-3 hidden"></p>
+
+            <button onclick="register()" id="reg-btn"
+                class="w-full bg-purple-600 active:bg-purple-800 text-white font-bold py-3 rounded-xl text-base transition-colors">
+                Зарегистрироваться
+            </button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════ ACCOUNT ══════════════════════════ -->
+    <div id="screen-account" class="hidden screen min-h-screen pb-4">
+
+        <!-- Purple header -->
+        <div class="bg-gradient-to-br from-purple-700 to-purple-900 text-white px-5 pt-6 pb-20">
+            <div class="flex items-center justify-between mb-5">
+                <div class="flex items-center gap-3">
+                    <div id="acc-avatar"
+                        class="w-11 h-11 bg-white bg-opacity-20 rounded-full flex items-center justify-center font-bold text-lg">
+                    </div>
+                    <div>
+                        <p class="text-purple-200 text-xs">Добро пожаловать</p>
+                        <p id="acc-name" class="font-semibold text-sm leading-tight"></p>
+                    </div>
+                </div>
+                <span class="text-3xl">🎢</span>
+            </div>
+
+            <!-- Balance card -->
+            <div class="bg-white bg-opacity-15 rounded-2xl p-4">
+                <p class="text-purple-200 text-xs font-semibold uppercase tracking-wider">Ваш баланс</p>
+                <div class="flex items-baseline gap-2 mt-1">
+                    <span id="acc-balance" class="text-4xl font-extrabold"></span>
+                    <span class="text-purple-200 text-sm">бонусов</span>
+                </div>
+                <p class="text-purple-300 text-xs mt-1">1 бонус = 1 тенге при оплате</p>
+            </div>
+        </div>
+
+        <!-- Tabs card (sticky) -->
+        <div class="sticky top-0 z-20 -mt-12 mx-4 bg-white rounded-2xl shadow-lg overflow-hidden">
+            <div class="flex border-b border-gray-100">
+                <button id="tab-home"    onclick="switchTab('home')"    class="tab-btn active flex-1 py-3 text-sm font-semibold text-purple-700">Главная</button>
+                <button id="tab-profile" onclick="switchTab('profile')" class="tab-btn flex-1 py-3 text-sm font-semibold text-gray-400">Профиль</button>
+                <button id="tab-about"   onclick="switchTab('about')"   class="tab-btn flex-1 py-3 text-sm font-semibold text-gray-400">О парке</button>
+            </div>
+        </div>
+
+        <!-- ── TAB: Главная ── -->
+        <div id="content-home" class="px-4 pt-4">
+
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Последние операции</h3>
+            <div id="transactions-list" class="space-y-2 mb-5">
+                <div class="text-center text-gray-400 text-sm py-6">Загрузка...</div>
+            </div>
+
+            <div class="bg-purple-50 border border-purple-100 rounded-2xl p-4">
+                <h3 class="font-semibold text-purple-800 text-sm mb-1.5">Как тратить бонусы?</h3>
+                <p class="text-sm text-purple-700 leading-relaxed">
+                    Назовите кассиру номер телефона при следующем посещении.
+                    Бонусами можно оплатить до 100% стоимости.
+                </p>
+            </div>
+        </div>
+
+        <!-- ── TAB: Профиль ── -->
+        <div id="content-profile" class="px-4 pt-4 hidden">
+
+            <!-- Личные данные -->
+            <div class="bg-white rounded-2xl shadow-sm p-5 mb-3">
+                <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Личные данные</h3>
+
+                <!-- Телефон (только чтение) -->
+                <div class="flex items-center justify-between py-3 border-b border-gray-50">
+                    <span class="text-sm text-gray-500">Телефон</span>
+                    <span id="prof-phone" class="text-sm font-medium text-gray-800"></span>
+                </div>
+
+                <!-- Имя (редактируемое) -->
+                <div class="py-3">
+                    <div id="name-view" class="flex items-center justify-between">
+                        <span class="text-sm text-gray-500">Имя</span>
+                        <div class="flex items-center gap-3">
+                            <span id="prof-name" class="text-sm font-medium text-gray-800"></span>
+                            <button onclick="startEditName()" class="text-xs font-semibold text-purple-500 hover:text-purple-700 transition-colors">Изменить</button>
+                        </div>
+                    </div>
+                    <div id="name-edit" class="hidden mt-3">
+                        <input type="text" id="edit-name-input" placeholder="Ваше имя"
+                            class="w-full border-2 border-purple-300 rounded-xl px-3 py-2.5 text-sm mb-2.5 focus:outline-none focus:border-purple-500">
+                        <div class="flex gap-2">
+                            <button onclick="saveName()" id="save-name-btn"
+                                class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold py-2.5 rounded-xl transition-colors">
+                                Сохранить
+                            </button>
+                            <button onclick="cancelEditName()"
+                                class="flex-1 border border-gray-200 text-gray-500 text-sm font-semibold py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
+                                Отмена
+                            </button>
+                        </div>
+                        <p id="name-edit-error" class="text-red-500 text-xs mt-2 hidden"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Дети -->
+            <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Дети</h3>
+                    <button onclick="toggleAddKidForm()" id="add-kid-btn"
+                        class="text-sm font-semibold text-purple-600 hover:text-purple-800 transition-colors">
+                        + Добавить
+                    </button>
+                </div>
+
+                <div id="prof-kids" class="mb-1"></div>
+
+                <!-- Форма добавления ребёнка -->
+                <div id="add-kid-form" class="hidden mt-3 pt-3 border-t border-gray-100">
+                    <!-- Предупреждение -->
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
+                        <p class="text-xs text-amber-700 font-medium leading-relaxed">
+                            Дата рождения указывается один раз и не может быть изменена после сохранения. Убедитесь, что данные введены верно.
+                        </p>
+                    </div>
+
+                    <input type="text" id="new-kid-name" placeholder="Имя ребёнка"
+                        class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm mb-2 focus:outline-none focus:border-purple-400">
+                    <select id="new-kid-gender"
+                        class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm mb-2 bg-white focus:outline-none focus:border-purple-400">
+                        <option value="boy">Мальчик</option>
+                        <option value="girl">Девочка</option>
+                    </select>
+                    <label class="block text-xs text-gray-400 font-medium mb-1 px-1">Дата рождения</label>
+                    <input type="date" id="new-kid-birth"
+                        class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm mb-3 bg-white focus:outline-none focus:border-purple-400">
+
+                    <p id="add-kid-error" class="text-red-500 text-xs mb-2 hidden"></p>
+
+                    <div class="flex gap-2">
+                        <button onclick="saveNewKid()" id="save-kid-btn"
+                            class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold py-2.5 rounded-xl transition-colors">
+                            Сохранить
+                        </button>
+                        <button onclick="cancelAddKid()"
+                            class="flex-1 border border-gray-200 text-gray-500 text-sm font-semibold py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
+                            Отмена
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ── TAB: О парке ── -->
+        <div id="content-about" class="px-4 pt-4 hidden space-y-3">
+
+            <div class="bg-white rounded-2xl shadow-sm p-5">
+                <h3 class="font-bold text-gray-800 mb-2">🎢 Funky Town</h3>
+                <p class="text-sm text-gray-600 leading-relaxed">
+                    Детский развлекательный парк. Аттракционы, игровые зоны и незабываемые
+                    впечатления для всей семьи!
+                </p>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm p-5">
+                <h3 class="font-semibold text-gray-800 mb-3">🕐 Режим работы</h3>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Понедельник – Пятница</span>
+                        <span class="font-medium">10:00 – 21:00</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Суббота – Воскресенье</span>
+                        <span class="font-medium">09:00 – 22:00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm p-5">
+                <h3 class="font-semibold text-gray-800 mb-3">🎁 Бонусная программа</h3>
+                <ul class="text-sm text-gray-600 space-y-2">
+                    <li class="flex gap-2"><span>•</span><span>Приветственный бонус при регистрации</span></li>
+                    <li class="flex gap-2"><span>•</span><span>1 бонус = 1 тенге при оплате</span></li>
+                    <li class="flex gap-2"><span>•</span><span>Бонусами оплачивается до 100% суммы</span></li>
+                    <li class="flex gap-2"><span>•</span><span>Специальные бонусы в день рождения ребёнка</span></li>
+                </ul>
+            </div>
+        </div>
+
+    </div><!-- /screen-account -->
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        const params = new URLSearchParams(window.location.search);
+        const TG_ID  = parseInt(params.get('tg_id') || '0') || (tg.initDataUnsafe?.user?.id ?? 0);
+
+        let customer  = null;
+        let activeTab = 'home';
+
+        // ─── INIT ───────────────────────────────────────────────────
+
+        async function init() {
+            if (!TG_ID) {
+                document.getElementById('screen-loading').innerHTML = `
+                    <div class="flex flex-col items-center justify-center min-h-screen text-white p-8 text-center">
+                        <div class="text-5xl mb-4">😕</div>
+                        <p class="font-bold text-lg">Откройте приложение через бота</p>
+                        <p class="text-purple-200 text-sm mt-2">Нажмите /start в боте Funky Town</p>
+                    </div>`;
+                return;
+            }
+            try {
+                const r = await apiFetch(`/customers/tg/${TG_ID}`);
+                if (r.ok) {
+                    customer = await r.json();
+                    renderAccount();
+                    showScreen('account');
+                    loadTransactions();
+                } else if (r.status === 404) {
+                    showScreen('register');
+                } else {
+                    throw new Error();
+                }
+            } catch {
+                const el = document.getElementById('screen-loading');
+                el.innerHTML += `<p class="text-purple-200 text-sm mt-4">Ошибка связи. Попробуйте позже.</p>`;
+            }
+        }
+
+        function showScreen(name) {
+            ['loading','register','account'].forEach(s =>
+                document.getElementById(`screen-${s}`).classList.add('hidden')
+            );
+            document.getElementById(`screen-${name}`).classList.remove('hidden');
+        }
+
+        // ─── ACCOUNT ────────────────────────────────────────────────
+
+        function renderAccount() {
+            const name     = customer.full_name || 'Гость';
+            const initials = name.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+
+            document.getElementById('acc-avatar').textContent  = initials;
+            document.getElementById('acc-name').textContent    = name;
+            document.getElementById('acc-balance').textContent = customer.balance;
+            document.getElementById('prof-name').textContent   = name;
+            document.getElementById('prof-phone').textContent  = customer.phone || '—';
+            renderKids();
+        }
+
+        function renderKids() {
+            const el = document.getElementById('prof-kids');
+            if (!customer.kids?.length) {
+                el.innerHTML = '<p class="text-sm text-gray-400">Дети не добавлены</p>';
+                return;
+            }
+            el.innerHTML = customer.kids.map(kid => {
+                const icon = kid.gender === 'girl' ? '👧' : '👦';
+                const bd   = kid.birth_date
+                    ? new Date(kid.birth_date).toLocaleDateString('ru-RU', { day:'numeric', month:'long' })
+                    : '';
+                return `
+                    <div class="flex items-center justify-between py-2.5 border-b border-gray-50 last:border-0">
+                        <span class="text-sm font-medium text-gray-800">${icon} ${esc(kid.name)}</span>
+                        <span class="text-sm text-gray-400">${bd}</span>
+                    </div>`;
+            }).join('');
+        }
+
+        async function loadTransactions() {
+            const list = document.getElementById('transactions-list');
+            try {
+                const r = await apiFetch(`/customers/${customer.id}/transactions?limit=5`);
+                if (!r.ok) throw new Error();
+                const items = await r.json();
+
+                if (!items.length) {
+                    list.innerHTML = '<p class="text-center text-gray-400 text-sm py-6">Операций пока нет</p>';
+                    return;
+                }
+
+                const labels = {
+                    registration: 'Приветственный бонус',
+                    birthday:     'Бонус на день рождения',
+                    manual:       null
+                };
+
+                list.innerHTML = items.map(tx => {
+                    const pos   = tx.amount > 0;
+                    const label = labels[tx.type] ?? (pos ? 'Начисление' : 'Списание');
+                    const color = pos ? 'text-green-600' : 'text-red-500';
+                    const date  = new Date(tx.created_at).toLocaleDateString('ru-RU', { day:'numeric', month:'short' });
+                    return `
+                        <div class="bg-white rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
+                            <div>
+                                <p class="text-sm font-medium text-gray-800">${label}</p>
+                                <p class="text-xs text-gray-400 mt-0.5">${date}</p>
+                            </div>
+                            <span class="${color} font-bold text-base">${pos ? '+' : ''}${tx.amount}</span>
+                        </div>`;
+                }).join('');
+            } catch {
+                list.innerHTML = '<p class="text-center text-gray-400 text-sm py-6">Не удалось загрузить историю</p>';
+            }
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            ['home','profile','about'].forEach(t => {
+                const btn = document.getElementById(`tab-${t}`);
+                const cnt = document.getElementById(`content-${t}`);
+                if (t === tab) {
+                    btn.classList.add('active','text-purple-700');
+                    btn.classList.remove('text-gray-400');
+                    cnt.classList.remove('hidden');
+                } else {
+                    btn.classList.remove('active','text-purple-700');
+                    btn.classList.add('text-gray-400');
+                    cnt.classList.add('hidden');
+                }
+            });
+        }
+
+        // ─── PROFILE EDITING ────────────────────────────────────────
+
+        function startEditName() {
+            document.getElementById('edit-name-input').value = customer.full_name || '';
+            document.getElementById('name-view').classList.add('hidden');
+            document.getElementById('name-edit').classList.remove('hidden');
+            document.getElementById('edit-name-input').focus();
+        }
+
+        function cancelEditName() {
+            document.getElementById('name-view').classList.remove('hidden');
+            document.getElementById('name-edit').classList.add('hidden');
+            document.getElementById('name-edit-error').classList.add('hidden');
+        }
+
+        async function saveName() {
+            const input = document.getElementById('edit-name-input');
+            const errEl = document.getElementById('name-edit-error');
+            const btn   = document.getElementById('save-name-btn');
+            const name  = input.value.trim();
+
+            if (!name) { showError(errEl, 'Введите имя'); return; }
+            errEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = 'Сохранение...';
+
+            try {
+                const r = await apiFetch(`/customers/${customer.id}/profile`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ full_name: name })
+                });
+                if (r.ok) {
+                    customer = await r.json();
+                    renderAccount();
+                    cancelEditName();
+                } else {
+                    const err = await r.json();
+                    showError(errEl, err.detail || 'Ошибка при сохранении');
+                }
+            } catch {
+                showError(errEl, 'Ошибка соединения');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Сохранить';
+        }
+
+        function toggleAddKidForm() {
+            const form = document.getElementById('add-kid-form');
+            if (form.classList.contains('hidden')) {
+                form.classList.remove('hidden');
+                document.getElementById('add-kid-btn').textContent = '✕ Закрыть';
+                document.getElementById('new-kid-name').focus();
+            } else {
+                cancelAddKid();
+            }
+        }
+
+        function cancelAddKid() {
+            document.getElementById('add-kid-form').classList.add('hidden');
+            document.getElementById('new-kid-name').value = '';
+            document.getElementById('new-kid-birth').value = '';
+            document.getElementById('add-kid-error').classList.add('hidden');
+            document.getElementById('add-kid-btn').textContent = '+ Добавить';
+        }
+
+        async function saveNewKid() {
+            const name   = document.getElementById('new-kid-name').value.trim();
+            const gender = document.getElementById('new-kid-gender').value;
+            const birth  = document.getElementById('new-kid-birth').value;
+            const errEl  = document.getElementById('add-kid-error');
+            const btn    = document.getElementById('save-kid-btn');
+
+            if (!name)  { showError(errEl, 'Введите имя ребёнка'); return; }
+            if (!birth) { showError(errEl, 'Укажите дату рождения'); return; }
+            errEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = 'Сохранение...';
+
+            try {
+                const r = await apiFetch(`/customers/${customer.id}/kids`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, gender, birth_date: birth })
+                });
+                if (r.ok) {
+                    const newKid = await r.json();
+                    customer.kids = [...(customer.kids || []), newKid];
+                    renderKids();
+                    cancelAddKid();
+                } else {
+                    const err = await r.json();
+                    showError(errEl, err.detail || 'Ошибка при сохранении');
+                }
+            } catch {
+                showError(errEl, 'Ошибка соединения');
+            }
+            btn.disabled = false;
+            btn.textContent = 'Сохранить';
+        }
+
+        // ─── PHONE MASK ─────────────────────────────────────────────
+
+        (function initPhoneMask() {
+            const input = document.getElementById('reg-phone');
+
+            function applyMask(raw) {
+                let digits = raw.replace(/\D/g, '');
+                if (digits.startsWith('8')) digits = '7' + digits.slice(1);
+                if (digits.length > 0 && !digits.startsWith('7')) digits = '7' + digits;
+                digits = digits.slice(0, 11);
+
+                if (digits.length === 0) return '';
+                // разделитель добавляется только если за ним есть хотя бы одна цифра
+                let out = '+7';
+                if (digits.length > 1) {
+                    out += ' (' + digits.slice(1, 4);
+                    if (digits.length > 4) {
+                        out += ') ' + digits.slice(4, 7);
+                        if (digits.length > 7) {
+                            out += '-' + digits.slice(7, 9);
+                            if (digits.length > 9) {
+                                out += '-' + digits.slice(9, 11);
+                            }
+                        }
+                    }
+                }
+                return out;
+            }
+
+            input.addEventListener('input', () => {
+                const prev = input.value.length;
+                input.value = applyMask(input.value);
+                if (input.value.length >= prev) {
+                    input.selectionStart = input.selectionEnd = input.value.length;
+                }
+            });
+
+            input.addEventListener('focus', () => {
+                if (!input.value) input.value = '+7';
+            });
+
+            input.addEventListener('blur', () => {
+                if (input.value === '+7') input.value = '';
+            });
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && input.value.length <= 2) {
+                    e.preventDefault();
+                }
+            });
+        })();
+
+        function getCleanPhone() {
+            const digits = document.getElementById('reg-phone').value.replace(/\D/g, '');
+            return digits.length === 11 ? '+' + digits : null;
+        }
+
+        // ─── REGISTRATION ───────────────────────────────────────────
+
+        function addKid() {
+            const c   = document.getElementById('kids-container');
+            const div = document.createElement('div');
+            div.className = 'bg-gray-50 rounded-xl p-3 kid-entry';
+            div.innerHTML = `
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm font-medium text-gray-600">Ребёнок</span>
+                    <button onclick="this.closest('.kid-entry').remove()" class="text-red-400 text-xs font-medium">Удалить</button>
+                </div>
+                <input type="text" placeholder="Имя" class="kid-name w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:border-purple-400 bg-white">
+                <select class="kid-gender w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2 bg-white focus:outline-none">
+                    <option value="boy">Мальчик</option>
+                    <option value="girl">Девочка</option>
+                </select>
+                <label class="block text-xs text-gray-400 font-medium mb-1">Дата рождения</label>
+                <input type="date" class="kid-birth w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-purple-400 mb-2">
+                <div class="flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                    <span class="text-amber-500 text-xs mt-0.5">⚠️</span>
+                    <p class="text-xs text-amber-700 leading-relaxed">Дата рождения указывается один раз и <strong>не может быть изменена</strong> после сохранения.</p>
+                </div>`;
+            c.appendChild(div);
+        }
+
+        async function register() {
+            const phone = getCleanPhone();
+            const name  = document.getElementById('reg-name').value.trim();
+            const errEl = document.getElementById('reg-error');
+            const btn   = document.getElementById('reg-btn');
+
+            if (!phone) { showError(errEl, 'Введите полный номер телефона (+7 и 10 цифр)'); return; }
+            if (!TG_ID) { showError(errEl, 'Не удалось определить Telegram ID. Закройте и откройте снова.'); return; }
+            errEl.classList.add('hidden');
+
+            const kids = [];
+            document.querySelectorAll('.kid-entry').forEach(div => {
+                const n = div.querySelector('.kid-name').value.trim();
+                const g = div.querySelector('.kid-gender').value;
+                const b = div.querySelector('.kid-birth').value;
+                if (n && b) kids.push({ name: n, gender: g, birth_date: b });
+            });
+
+            btn.disabled = true;
+            btn.textContent = 'Сохраняем...';
+
+            try {
+                const r = await apiFetch('/customers/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, full_name: name, tg_id: TG_ID, kids })
+                });
+
+                if (r.ok) {
+                    customer = await r.json();
+                    renderAccount();
+                    showScreen('account');
+                    loadTransactions();
+                } else {
+                    const err = await r.json();
+                    showError(errEl, err.detail || 'Ошибка при регистрации');
+                    btn.disabled = false;
+                btn.textContent = 'Зарегистрироваться';
+            }
+            } catch {
+                showError(errEl, 'Ошибка соединения');
+                btn.disabled = false;
+                btn.textContent = 'Зарегистрироваться';
+            }
+        }
+
+        // ─── UTILS ──────────────────────────────────────────────────
+
+        // Обёртка над fetch: добавляет заголовок для обхода ngrok-заглушки на iOS
+        function apiFetch(url, options = {}) {
+            const headers = {
+                'ngrok-skip-browser-warning': '1',
+                ...(options.headers || {})
+            };
+            return fetch(url, { ...options, headers });
+        }
+
+        function showError(el, msg) {
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+
+        function esc(str) {
+            return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        init();
+    </script>
+</body>
+</html>

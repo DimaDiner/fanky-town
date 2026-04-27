@@ -1,0 +1,36 @@
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Секреты и локальная конфигурация
+.env
+.env.local
+*.local
+
+# SQLite (локальная БД)
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# IDE / ОС
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Логи
+*.log
+
+# Утилиты (не в репозиторий)
+ngrok.exe
+ngrok
