@@ -4,9 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BASE_API_URL = "http://127.0.0.1:8000"
+BASE_API_URL = os.getenv("BASE_API_URL", "http://127.0.0.1:8000")
 
-WEBAPP_URL = "https://dc8f-188-130-156-242.ngrok-free.app"  # Обновляй при каждом перезапуске ngrok
+# Публичный HTTPS-URL для Telegram Web App (на сервере задаётся в .env)
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://funky-town-kst.kz")
 
 BOT_USERNAME = "funkytown_kz_bot"  # Без @
 

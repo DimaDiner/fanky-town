@@ -1,0 +1,16 @@
+[Unit]
+Description=Funky Town Telegram Bot
+After=network.target funky-api.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/fanky-town
+Environment="PATH=/opt/fanky-town/venv/bin"
+EnvironmentFile=/opt/fanky-town/.env
+ExecStart=/opt/fanky-town/venv/bin/python -m bot.run_bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

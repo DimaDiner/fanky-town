@@ -1,0 +1,16 @@
+[Unit]
+Description=Funky Town FastAPI (uvicorn)
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/fanky-town
+Environment="PATH=/opt/fanky-town/venv/bin"
+EnvironmentFile=/opt/fanky-town/.env
+ExecStart=/opt/fanky-town/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
