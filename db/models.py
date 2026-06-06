@@ -6,13 +6,36 @@ from .database import Base
 
 # --- Перечисления ---
 class StaffRole(str, enum.Enum):
-    cashier = "cashier"   # Кассир
-    admin = "admin"       # Управляющий
+    cashier  = "cashier"   # Кассир (кассовый терминал)
+    admin    = "admin"     # Администратор (полный доступ к CRM)
+    operator = "operator"  # Оператор (только просмотр бронирований в CRM)
 
 class TransactionType(str, enum.Enum):
-    manual = "manual"             # Кассир списал/начислил на кассе
-    registration = "registration" # Авто-бонус за регистрацию
-    birthday = "birthday"         # Авто-бонус на ДР
+    manual       = "manual"        # Кассир списал/начислил на кассе
+    registration = "registration"  # Авто-бонус за регистрацию
+    birthday     = "birthday"      # Авто-бонус на ДР
+
+class BookingStatus(str, enum.Enum):
+    draft     = "draft"      # Черновик
+    confirmed = "confirmed"  # Подтверждён
+    cancelled = "cancelled"  # Отменён
+
+class HeroType(str, enum.Enum):
+    labubu   = "labubu"    # Лабубу
+    stitch   = "stitch"    # Стач
+    zootopia = "zootopia"  # Зверополис
+    batman   = "batman"    # Бэтмен
+    superman = "superman"  # Супермен
+    ironman  = "ironman"   # Железный человек
+    unicorn  = "unicorn"   # Единорожка
+    deadpool = "deadpool"  # Дедпул
+
+class PackageType(str, enum.Enum):
+    vip     = "vip"      # VIP
+    lite    = "lite"     # Lite
+    super   = "super"    # Super
+    premium = "premium"  # Premium
+    extreme = "extreme"  # Extreme
 
 # ==========================================
 # ТАБЛИЦА 1: ПЕРСОНАЛ (Кассиры и Админы)
@@ -21,6 +44,8 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=True)  # Логин для входа в CRM
+    password_hash = Column(String, nullable=True)                      # Хеш пароля (только CRM)
     tg_id = Column(BigInteger, unique=True, index=True, nullable=True)
     tg_username = Column(String, nullable=True)       # @username без символа @
     invite_token = Column(String, unique=True, nullable=True, index=True)  # одноразовый токен приглашения
@@ -86,3 +111,25 @@ class Setting(Base):
 
     key   = Column(String, primary_key=True, index=True)
     value = Column(Text, nullable=False)
+
+# ==========================================
+# ТАБЛИЦА 6: БРОНИРОВАНИЯ
+# ==========================================
+class Booking(Base):
+    __tablename__ = "bookings"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    date           = Column(Date, nullable=False, index=True)
+    time_start     = Column(String(5), nullable=False)   # "HH:MM"
+    time_end       = Column(String(5), nullable=False)   # "HH:MM"
+    phone          = Column(String, nullable=False)
+    children_count = Column(Integer, nullable=False)
+    package        = Column(Enum(PackageType), nullable=False)
+    hero           = Column(Enum(HeroType), nullable=False)
+    parent_name    = Column(String, nullable=False)
+    child_name     = Column(String, nullable=False)
+    child_age      = Column(Integer, nullable=False)
+    status         = Column(Enum(BookingStatus), nullable=False, default=BookingStatus.draft)
+    notes          = Column(Text, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

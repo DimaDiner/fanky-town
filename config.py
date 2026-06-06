@@ -15,3 +15,9 @@ REGISTRATION_BONUS = 500  # Бонусы за регистрацию
 
 # tg_id владельца системы — всегда имеет доступ к /cashier даже без записи в БД
 ADMIN_TG_IDS: list[int] = []  # временно пусто для тестирования клиентского флоу
+
+# Учётные записи CRM (логин + пароль). Создаются при первом запуске, если их ещё нет в БД.
+CRM_ADMIN_LOGIN = os.getenv("CRM_ADMIN_LOGIN", "admin")
+CRM_ADMIN_PASSWORD = os.getenv("CRM_ADMIN_PASSWORD", "admin485")
+CRM_OPERATOR_LOGIN = os.getenv("CRM_OPERATOR_LOGIN", "operator")
+CRM_OPERATOR_PASSWORD = os.getenv("CRM_OPERATOR_PASSWORD", "operator123")

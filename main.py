@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import secrets
 import json
 import httpx
-from db.database import engine, Base, get_db
+from db.database import engine, Base, get_db, SessionLocal
 import db.models as models
 import schemas
 import crud
@@ -21,12 +21,21 @@ async def lifespan(app: FastAPI):
         for stmt in [
             "ALTER TABLE users ADD COLUMN tg_username VARCHAR",
             "ALTER TABLE users ADD COLUMN invite_token VARCHAR",
+            "ALTER TABLE users ADD COLUMN username VARCHAR",
+            "ALTER TABLE users ADD COLUMN password_hash VARCHAR",
         ]:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
             except Exception:
                 pass  # колонка уже существует
+
+    db = SessionLocal()
+    try:
+        crud.ensure_default_crm_users(db)
+    finally:
+        db.close()
+
     yield
 
 
@@ -174,7 +183,7 @@ def admin_panel():
     return FileResponse("static/admin.html")
 
 
-@app.get("/admin/stats/", response_model=schemas.AdminStats)
+@app.get("/admin/stats/", response_model=schemas.AdminStatsExtended)
 def admin_stats(db: Session = Depends(get_db)):
     return crud.get_admin_stats(db)
 
@@ -348,4 +357,122 @@ async def send_broadcast(
         "no_tg_count": no_tg,
         "total": len(customers),
     }
+
+
+# ══════════════════════════════════════════════
+# АВТОРИЗАЦИЯ CRM
+# ══════════════════════════════════════════════
+
+@app.post("/admin/auth/", response_model=schemas.CRMUserResponse)
+def crm_auth(body: schemas.CRMLoginRequest, db: Session = Depends(get_db)):
+    """
+    Авторизация в CRM по логину и паролю.
+    Доступ разрешён для ролей: admin, operator.
+    """
+    staff = crud.authenticate_crm_user(db, body.username, body.password)
+    if not staff:
+        raise HTTPException(status_code=403, detail="Неверный логин или пароль")
+    return staff
+
+
+# ══════════════════════════════════════════════
+# БРОНИРОВАНИЯ
+# ══════════════════════════════════════════════
+
+@app.get("/admin/bookings/check-conflict", response_model=schemas.BookingConflictResponse)
+def check_booking_conflict(
+    date: str,
+    time_start: str,
+    time_end: str,
+    exclude_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Проверяет конфликт времени до создания/обновления брони.
+    Используется фронтендом для real-time валидации.
+    Параметры: date (YYYY-MM-DD), time_start (HH:MM), time_end (HH:MM), exclude_id (опционально).
+    """
+    from datetime import date as _date
+    try:
+        booking_date = _date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Неверный формат даты (ожидается YYYY-MM-DD)")
+
+    conflict = crud.check_time_conflict(db, booking_date, time_start, time_end, exclude_id)
+    if conflict:
+        return {"conflict": True, "conflicting_booking": conflict}
+    return {"conflict": False, "conflicting_booking": None}
+
+
+@app.get("/admin/bookings/", response_model=list[schemas.BookingListItem])
+def list_bookings(
+    year: int = None,
+    month: int = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Возвращает все брони за указанный месяц.
+    По умолчанию — текущий месяц.
+    """
+    from datetime import date as _date
+    today = _date.today()
+    y = year  if year  else today.year
+    m = month if month else today.month
+    if not (1 <= m <= 12):
+        raise HTTPException(status_code=422, detail="Месяц должен быть от 1 до 12")
+    return crud.get_bookings_by_month(db, y, m)
+
+
+@app.post("/admin/bookings/", response_model=schemas.BookingResponse, status_code=201)
+def create_booking(booking: schemas.BookingCreate, db: Session = Depends(get_db)):
+    """Создаёт новое бронирование. Статус выбирается администратором (по умолчанию draft)."""
+    try:
+        return crud.create_booking(db, booking)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/admin/bookings/{booking_id}", response_model=schemas.BookingResponse)
+def get_booking(booking_id: int, db: Session = Depends(get_db)):
+    booking = crud.get_booking_by_id(db, booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Бронирование не найдено")
+    return booking
+
+
+@app.patch("/admin/bookings/{booking_id}", response_model=schemas.BookingResponse)
+def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = Depends(get_db)):
+    """Обновляет любые поля брони. Все поля опциональны."""
+    try:
+        booking = crud.update_booking(db, booking_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if not booking:
+        raise HTTPException(status_code=404, detail="Бронирование не найдено")
+    return booking
+
+
+@app.patch("/admin/bookings/{booking_id}/status", response_model=schemas.BookingResponse)
+def update_booking_status(
+    booking_id: int,
+    data: schemas.BookingStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    """Быстрая смена статуса без передачи всех полей. Все переходы разрешены."""
+    booking = crud.update_booking_status(db, booking_id, data.status)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Бронирование не найдено")
+    return booking
+
+
+@app.delete("/admin/bookings/{booking_id}")
+def delete_booking(booking_id: int, db: Session = Depends(get_db)):
+    """
+    Мягкое удаление: переводит бронь в статус 'cancelled'.
+    Запись физически не удаляется из БД.
+    """
+    success = crud.delete_booking(db, booking_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Бронирование не найдено")
+    return {"ok": True}
 

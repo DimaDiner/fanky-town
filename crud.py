@@ -1,9 +1,18 @@
+import hashlib
+import secrets
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date
-from db.models import Customer, Kid, Transaction, TransactionType, User, Setting
+from db.models import Customer, Kid, Transaction, TransactionType, User, Setting, Booking, BookingStatus, StaffRole
 import schemas
-from config import REGISTRATION_BONUS
+from config import (
+    REGISTRATION_BONUS,
+    CRM_ADMIN_LOGIN,
+    CRM_ADMIN_PASSWORD,
+    CRM_OPERATOR_LOGIN,
+    CRM_OPERATOR_PASSWORD,
+)
 
 # --- НАСТРОЙКИ ---
 
@@ -110,6 +119,72 @@ def add_kid_to_customer(db: Session, customer_id: int, kid_data: schemas.KidCrea
 
 # --- ПЕРСОНАЛ ---
 
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
+    )
+    return f"{salt}${digest.hex()}"
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    if not password_hash or "$" not in password_hash:
+        return False
+    salt, expected = password_hash.split("$", 1)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
+    )
+    return secrets.compare_digest(digest.hex(), expected)
+
+
+def get_staff_by_username(db: Session, username: str) -> User | None:
+    login = username.strip().lower()
+    if not login:
+        return None
+    return (
+        db.query(User)
+        .filter(User.username == login, User.is_active == True)
+        .first()
+    )
+
+
+def authenticate_crm_user(db: Session, username: str, password: str) -> User | None:
+    user = get_staff_by_username(db, username)
+    if not user or not user.password_hash:
+        return None
+    if user.role not in (StaffRole.admin, StaffRole.operator):
+        return None
+    if not _verify_password(password, user.password_hash):
+        return None
+    return user
+
+
+def ensure_default_crm_users(db: Session) -> None:
+    """Создаёт учётные записи admin и operator, если их ещё нет."""
+    defaults = (
+        (CRM_ADMIN_LOGIN, CRM_ADMIN_PASSWORD, StaffRole.admin, "Администратор"),
+        (CRM_OPERATOR_LOGIN, CRM_OPERATOR_PASSWORD, StaffRole.operator, "Оператор"),
+    )
+    created = False
+    for login, password, role, name in defaults:
+        login = login.strip().lower()
+        if not login or not password:
+            continue
+        exists = db.query(User).filter(User.username == login).first()
+        if exists:
+            continue
+        db.add(User(
+            username=login,
+            password_hash=_hash_password(password),
+            name=name,
+            role=role,
+            is_active=True,
+        ))
+        created = True
+    if created:
+        db.commit()
+
+
 def create_staff(db: Session, staff: schemas.StaffCreate, invite_token: str) -> User:
     db_user = User(
         name=staff.name,
@@ -188,12 +263,16 @@ def get_admin_stats(db: Session) -> dict:
         Transaction.created_at >= today_start
     ).scalar() or 0
 
+    # Статистика бронирований
+    booking_stats = get_bookings_stats(db)
+
     return {
-        "total_customers":     total_customers,
-        "active_cashiers":     active_cashiers,
+        "total_customers":      total_customers,
+        "active_cashiers":      active_cashiers,
         "bonuses_issued_today": int(issued_today),
         "bonuses_spent_today":  abs(int(spent_today)),
         "total_bonus_balance":  int(total_balance),
+        **booking_stats,
     }
 
 
@@ -331,4 +410,173 @@ def process_transaction(db: Session, trans: schemas.TransactionCreate):
     db.commit()
     db.refresh(customer)
     return customer
+
+
+# ══════════════════════════════════════════════
+# БРОНИРОВАНИЯ
+# ══════════════════════════════════════════════
+
+def check_time_conflict(
+    db: Session,
+    booking_date: date,
+    time_start: str,
+    time_end: str,
+    exclude_id: int | None = None
+) -> "Booking | None":
+    """
+    Проверяет конфликт с существующими бронями на ту же дату.
+    Отменённые брони (status=cancelled) НЕ блокируют слот.
+    Возвращает конфликтующую бронь или None.
+
+    Алгоритм пересечения интервалов:
+        Конфликт есть, если: existing.time_start < new.time_end
+                              И existing.time_end > new.time_start
+    Примеры:
+        Существующая 12:00–14:00:
+        - Новая 13:00–15:00 → КОНФЛИКТ
+        - Новая 14:00–16:00 → нет конфликта (граница не считается)
+        - Новая 10:00–12:00 → нет конфликта (граница не считается)
+    """
+    query = db.query(Booking).filter(
+        Booking.date == booking_date,
+        Booking.status != BookingStatus.cancelled,
+        Booking.time_start < time_end,
+        Booking.time_end > time_start,
+    )
+    if exclude_id is not None:
+        query = query.filter(Booking.id != exclude_id)
+    return query.first()
+
+
+def create_booking(db: Session, data: schemas.BookingCreate) -> Booking:
+    """
+    Создаёт новое бронирование.
+    Raises ValueError если есть конфликт времени.
+    """
+    conflict = check_time_conflict(db, data.date, data.time_start, data.time_end)
+    if conflict:
+        raise ValueError("Это время уже занято")
+
+    booking = Booking(
+        date=data.date,
+        time_start=data.time_start,
+        time_end=data.time_end,
+        phone=data.phone,
+        children_count=data.children_count,
+        package=data.package,
+        hero=data.hero,
+        parent_name=data.parent_name,
+        child_name=data.child_name,
+        child_age=data.child_age,
+        status=data.status,
+        notes=data.notes,
+    )
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+def get_bookings_by_month(db: Session, year: int, month: int) -> list[Booking]:
+    """Возвращает все брони за указанный месяц, сортировка по дате + time_start."""
+    from calendar import monthrange
+    last_day = monthrange(year, month)[1]
+    date_from = date(year, month, 1)
+    date_to   = date(year, month, last_day)
+
+    return (
+        db.query(Booking)
+        .filter(Booking.date >= date_from, Booking.date <= date_to)
+        .order_by(Booking.date, Booking.time_start)
+        .all()
+    )
+
+
+def get_booking_by_id(db: Session, booking_id: int) -> Booking | None:
+    return db.query(Booking).filter(Booking.id == booking_id).first()
+
+
+def update_booking(db: Session, booking_id: int, data: schemas.BookingUpdate) -> Booking | None:
+    """
+    Обновляет поля брони. Если меняются дата или время — проверяет конфликт.
+    Все поля опциональны — обновляются только переданные (не None).
+    """
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return None
+
+    update_data = data.model_dump(exclude_none=True)
+
+    # Если меняется дата или время — проверяем конфликт
+    new_date  = update_data.get("date",       booking.date)
+    new_start = update_data.get("time_start", booking.time_start)
+    new_end   = update_data.get("time_end",   booking.time_end)
+
+    if "date" in update_data or "time_start" in update_data or "time_end" in update_data:
+        conflict = check_time_conflict(db, new_date, new_start, new_end, exclude_id=booking_id)
+        if conflict:
+            raise ValueError("Это время уже занято")
+
+    for field, value in update_data.items():
+        setattr(booking, field, value)
+
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+def update_booking_status(db: Session, booking_id: int, status: BookingStatus) -> Booking | None:
+    """Меняет только статус брони. Все переходы разрешены."""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return None
+    booking.status = status
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+def delete_booking(db: Session, booking_id: int) -> bool:
+    """
+    Мягкое удаление: меняет статус на 'cancelled'.
+    Запись физически не удаляется из БД (сохраняется история).
+    Возвращает True если запись найдена, False если нет.
+    """
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return False
+    booking.status = BookingStatus.cancelled
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    return True
+
+
+def get_bookings_stats(db: Session) -> dict:
+    """Статистика бронирований для дашборда."""
+    from calendar import monthrange
+    today = date.today()
+    first_day_of_month = date(today.year, today.month, 1)
+    last_day_of_month  = date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+    today_count = db.query(Booking).filter(
+        Booking.date == today
+    ).count()
+
+    month_count = db.query(Booking).filter(
+        Booking.date >= first_day_of_month,
+        Booking.date <= last_day_of_month
+    ).count()
+
+    confirmed_count = db.query(Booking).filter(
+        Booking.status == BookingStatus.confirmed,
+        Booking.date >= today
+    ).count()
+
+    return {
+        "bookings_today":      today_count,
+        "bookings_this_month": month_count,
+        "bookings_confirmed":  confirmed_count,
+    }
 
