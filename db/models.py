@@ -6,9 +6,10 @@ from .database import Base
 
 # --- Перечисления ---
 class StaffRole(str, enum.Enum):
-    cashier  = "cashier"   # Кассир (кассовый терминал)
+    cashier  = "cashier"   # Кассир (кассовый терминал Telegram)
     admin    = "admin"     # Администратор (полный доступ к CRM)
     operator = "operator"  # Оператор (только просмотр бронирований в CRM)
+    booker   = "booker"    # Кассир CRM (полный доступ к вкладке «Бронирования»)
 
 class TransactionType(str, enum.Enum):
     manual       = "manual"        # Кассир списал/начислил на кассе
@@ -31,11 +32,10 @@ class HeroType(str, enum.Enum):
     deadpool = "deadpool"  # Дедпул
 
 class PackageType(str, enum.Enum):
-    vip     = "vip"      # VIP
-    lite    = "lite"     # Lite
-    super   = "super"    # Super
-    premium = "premium"  # Premium
-    extreme = "extreme"  # Extreme
+    lite          = "lite"           # Фанки Лайт
+    vip           = "vip"            # Фанки Вип
+    extreme       = "extreme"        # Фанки Экстрим
+    all_inclusive = "all_inclusive"  # Фанки Все включено
 
 # ==========================================
 # ТАБЛИЦА 1: ПЕРСОНАЛ (Кассиры и Админы)

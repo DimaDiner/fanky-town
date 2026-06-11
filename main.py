@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE users ADD COLUMN invite_token VARCHAR",
             "ALTER TABLE users ADD COLUMN username VARCHAR",
             "ALTER TABLE users ADD COLUMN password_hash VARCHAR",
+            "UPDATE bookings SET package = 'lite' WHERE package IN ('super', 'premium')",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -367,7 +368,7 @@ async def send_broadcast(
 def crm_auth(body: schemas.CRMLoginRequest, db: Session = Depends(get_db)):
     """
     Авторизация в CRM по логину и паролю.
-    Доступ разрешён для ролей: admin, operator.
+    Доступ разрешён для ролей: admin, operator, booker.
     """
     staff = crud.authenticate_crm_user(db, body.username, body.password)
     if not staff:

@@ -12,6 +12,8 @@ from config import (
     CRM_ADMIN_PASSWORD,
     CRM_OPERATOR_LOGIN,
     CRM_OPERATOR_PASSWORD,
+    CRM_BOOKER_LOGIN,
+    CRM_BOOKER_PASSWORD,
 )
 
 # --- НАСТРОЙКИ ---
@@ -152,7 +154,7 @@ def authenticate_crm_user(db: Session, username: str, password: str) -> User | N
     user = get_staff_by_username(db, username)
     if not user or not user.password_hash:
         return None
-    if user.role not in (StaffRole.admin, StaffRole.operator):
+    if user.role not in (StaffRole.admin, StaffRole.operator, StaffRole.booker):
         return None
     if not _verify_password(password, user.password_hash):
         return None
@@ -160,10 +162,11 @@ def authenticate_crm_user(db: Session, username: str, password: str) -> User | N
 
 
 def ensure_default_crm_users(db: Session) -> None:
-    """Создаёт учётные записи admin и operator, если их ещё нет."""
+    """Создаёт учётные записи admin, operator и booker, если их ещё нет."""
     defaults = (
         (CRM_ADMIN_LOGIN, CRM_ADMIN_PASSWORD, StaffRole.admin, "Администратор"),
         (CRM_OPERATOR_LOGIN, CRM_OPERATOR_PASSWORD, StaffRole.operator, "Оператор"),
+        (CRM_BOOKER_LOGIN, CRM_BOOKER_PASSWORD, StaffRole.booker, "Кассир"),
     )
     created = False
     for login, password, role, name in defaults:

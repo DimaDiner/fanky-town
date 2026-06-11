@@ -550,9 +550,9 @@
                 <i data-lucide="chevron-right" class="w-5 h-5"></i>
             </button>
         </div>
-        <!-- Кнопка видна только admin (скрыта для operator через JS в задаче 07) -->
+        <!-- Кнопка видна admin и booker (скрыта для operator) -->
         <button id="btn-add-booking" onclick="openCreateBookingModal()"
-                class="admin-only inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700
+                class="booking-editable inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700
                        text-white font-bold px-4 py-2 rounded-xl text-sm transition-colors">
             <i data-lucide="plus" class="w-4 h-4"></i> Добавить
         </button>
@@ -599,7 +599,7 @@
 
 let currentUser = null; // { id, name, role }
 
-const ROLE_LABELS = { admin: 'Администратор', operator: 'Оператор' };
+const ROLE_LABELS = { admin: 'Администратор', operator: 'Оператор', booker: 'Кассир' };
 
 async function initAuth() {
     const saved = localStorage.getItem('crm_session');
@@ -685,20 +685,22 @@ function showMainApp() {
 }
 
 function applyRoleRestrictions(role) {
-    if (role === 'operator') {
+    if (role === 'operator' || role === 'booker') {
         // Скрыть все вкладки кроме «Бронирования»
         ['dashboard','customers','transactions','staff','settings','broadcast'].forEach(tab => {
             const btn = document.getElementById(`tab-${tab}`);
             if (btn) btn.classList.add('hidden');
         });
 
-        // Скрыть элементы только для администратора
-        document.querySelectorAll('.admin-only').forEach(el => el.classList.add('hidden'));
-
         // Автоматически открыть вкладку бронирований
         switchTab('bookings');
     }
-    // Для admin — никаких ограничений
+
+    if (role === 'operator') {
+        // Только просмотр: скрыть все действия на вкладке бронирований
+        document.querySelectorAll('.booking-editable').forEach(el => el.classList.add('hidden'));
+    }
+    // admin и booker — полный доступ на вкладке «Бронирования»
 }
 
 function logout() {
@@ -1671,7 +1673,13 @@ const HERO_LABELS = {
 };
 
 const PACKAGE_LABELS = {
-    vip: 'VIP', lite: 'Lite', super: 'Super', premium: 'Premium', extreme: 'Extreme'
+    lite: 'Фанки Лайт',
+    vip: 'Фанки Вип',
+    extreme: 'Фанки Экстрим',
+    all_inclusive: 'Фанки Все включено',
+    // Устаревшие значения (для старых записей в БД)
+    super: 'Фанки Лайт',
+    premium: 'Фанки Все включено',
 };
 
 const STATUS_LABELS = {
@@ -1929,6 +1937,64 @@ function validateBookingForm(data) {
     if (diff < 30) { showToast('Минимальная длительность — 30 минут', 'error'); return false; }
 
     return true;
+}
+
+function formatBookingText(data) {
+    const dateFormatted = data.date
+        ? new Date(data.date + 'T00:00:00').toLocaleDateString('ru-RU', {
+            weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+          })
+        : '—';
+
+    const lines = [
+        '🎉 Бронирование Funky Town',
+        '',
+        `📅 Дата: ${dateFormatted}`,
+        `⏰ Время: ${data.time_start || '—'} – ${data.time_end || '—'}`,
+        '',
+        `👤 Родитель: ${data.parent_name || '—'}`,
+        `📞 Телефон: ${data.phone || '—'}`,
+        '',
+        `👶 Ребёнок: ${data.child_name || '—'} (${data.child_age ?? '—'} лет)`,
+        `👥 Кол-во детей: ${data.children_count || '—'}`,
+        '',
+        `🎁 Пакет: ${PACKAGE_LABELS[data.package] || data.package || '—'}`,
+        `🦸 Мульт. герой: ${HERO_LABELS[data.hero] || data.hero || '—'}`,
+    ];
+
+    if (data.status) {
+        lines.push(`📋 Статус: ${STATUS_LABELS[data.status] || data.status}`);
+    }
+    if (data.notes) {
+        lines.push('', `💬 Заметки: ${data.notes}`);
+    }
+
+    return lines.join('\n');
+}
+
+async function copyBookingInfo() {
+    const data = collectBookingFormData();
+    const text = formatBookingText(data);
+
+    try {
+        await navigator.clipboard.writeText(text);
+        showToast('Информация скопирована', 'success');
+    } catch {
+        // Fallback для старых браузеров
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast('Информация скопирована', 'success');
+        } catch {
+            showToast('Не удалось скопировать', 'error');
+        }
+        document.body.removeChild(ta);
+    }
 }
 
 async function saveBooking() {
@@ -2201,11 +2267,10 @@ initAuth(); // авторизация запустит loadStats/loadRecentTx в
                             class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm
                                    focus:outline-none focus:border-purple-500 bg-white">
                         <option value="">— выбрать —</option>
-                        <option value="vip">VIP</option>
-                        <option value="lite">Lite</option>
-                        <option value="super">Super</option>
-                        <option value="premium">Premium</option>
-                        <option value="extreme">Extreme</option>
+                        <option value="lite">Фанки Лайт</option>
+                        <option value="vip">Фанки Вип</option>
+                        <option value="extreme">Фанки Экстрим</option>
+                        <option value="all_inclusive">Фанки Все включено</option>
                     </select>
                 </div>
                 <div>
@@ -2229,13 +2294,13 @@ initAuth(); // авторизация запустит loadStats/loadRecentTx в
             </div>
 
             <!-- Статус -->
-            <div>
+            <div class="booking-editable">
                 <label class="block text-sm font-semibold text-gray-700 mb-1.5">
                     Статус <span class="text-red-500">*</span>
                 </label>
                 <select id="bm-status"
                         class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm
-                               focus:outline-none focus:border-purple-500 bg-white admin-only">
+                               focus:outline-none focus:border-purple-500 bg-white">
                     <option value="draft">Черновик</option>
                     <option value="confirmed">Подтверждён</option>
                     <option value="cancelled">Отменён</option>
@@ -2256,7 +2321,7 @@ initAuth(); // авторизация запустит loadStats/loadRecentTx в
         <div class="px-6 py-4 border-t border-gray-100 flex items-center justify-between sticky bottom-0 bg-white">
             <!-- Кнопка удаления — только в режиме редактирования + только admin -->
             <button id="bm-delete-btn" onclick="deleteBooking()"
-                    class="admin-only hidden inline-flex items-center gap-2 text-red-500
+                    class="booking-editable hidden inline-flex items-center gap-2 text-red-500
                            hover:text-red-700 hover:bg-red-50 font-semibold text-sm px-3 py-2
                            rounded-xl transition-colors">
                 <i data-lucide="trash-2" class="w-4 h-4"></i> Отменить бронь
@@ -2267,8 +2332,13 @@ initAuth(); // авторизация запустит loadStats/loadRecentTx в
                                rounded-xl transition-colors">
                     Закрыть
                 </button>
+                <button onclick="copyBookingInfo()"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold
+                               text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors">
+                    <i data-lucide="copy" class="w-4 h-4"></i> Скопировать
+                </button>
                 <button id="bm-save-btn" onclick="saveBooking()"
-                        class="admin-only inline-flex items-center gap-2 bg-purple-600
+                        class="booking-editable inline-flex items-center gap-2 bg-purple-600
                                hover:bg-purple-700 text-white font-bold px-5 py-2 rounded-xl
                                text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                     <i data-lucide="check" class="w-4 h-4"></i>
