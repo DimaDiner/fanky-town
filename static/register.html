@@ -50,7 +50,20 @@
         const urlParams = new URLSearchParams(window.location.search);
         const TG_ID = parseInt(urlParams.get('tg_id') || '0')
             || (tg.initDataUnsafe?.user?.id ?? 0); // фолбэк на initDataUnsafe
-з
+
+        function monthsWord(n) {
+            n = Math.abs(n) % 100;
+            const n1 = n % 10;
+            if (n >= 11 && n <= 19) return 'месяцев';
+            if (n1 === 1) return 'месяц';
+            if (n1 >= 2 && n1 <= 4) return 'месяца';
+            return 'месяцев';
+        }
+
+        function ttlPhrase(ttl) {
+            if (!ttl || ttl <= 0) return '';
+            return `\n\nБонусы можно использовать в течение ${ttl} ${monthsWord(ttl)}.`;
+        }
         function addKidField() {
             const container = document.getElementById('kids-container');
             const kidDiv = document.createElement('div');
@@ -113,7 +126,7 @@
                 if (response.ok) {
                     const result = await response.json();
                     tg.showAlert(
-                        `Добро пожаловать в Funky Town!\n\nВаша карта создана. На счёт зачислено ${result.balance} приветственных бонусов!`,
+                        `Добро пожаловать в Funky Town!\n\nВаша карта создана. На счёт зачислено ${result.balance} приветственных бонусов!${ttlPhrase(result.bonus_ttl_months)}`,
                         () => tg.close()
                     );
                 } else {

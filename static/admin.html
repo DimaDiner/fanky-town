@@ -208,6 +208,7 @@
                     <option value="manual">Ручная</option>
                     <option value="registration">Регистрация</option>
                     <option value="birthday">День рождения</option>
+                    <option value="expiry">Истечение срока</option>
                 </select>
                 <input type="date" id="tx-date-from" title="Дата с"
                     class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-500 bg-white">
@@ -348,6 +349,29 @@
                     </button>
                 </div>
                 <p id="reg-bonus-status" class="text-sm mt-2 hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Время жизни бонусов -->
+    <div class="bg-white rounded-2xl shadow-sm p-5 mb-4">
+        <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center flex-shrink-0">
+                <i data-lucide="clock" class="w-5 h-5 text-amber-500"></i>
+            </div>
+            <div class="flex-1">
+                <h2 class="font-bold text-gray-800 mb-1">Время жизни бонусов (месяцев)</h2>
+                <p class="text-sm text-gray-400 mb-4">Срок действия для <strong>новых</strong> начислений: момент начисления + указанное число месяцев. Смена настройки <strong>не</strong> меняет уже выданные партии. Укажите <strong>0</strong> — новые бонусы не сгорают. По умолчанию при первом запуске — <strong>3</strong> месяца.</p>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <input type="number" id="bonus-ttl-input" min="0" step="1" placeholder="3"
+                        class="w-36 border border-gray-200 rounded-xl px-4 py-2.5 text-base font-bold text-gray-800 focus:outline-none focus:border-purple-500 text-center">
+                    <span class="text-sm text-gray-400">месяцев</span>
+                    <button onclick="saveBonusTtl()" id="bonus-ttl-btn"
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition-colors">
+                        Сохранить
+                    </button>
+                </div>
+                <p id="bonus-ttl-status" class="text-sm mt-2 hidden"></p>
             </div>
         </div>
     </div>
@@ -567,7 +591,11 @@
             <span class="w-3 h-3 rounded-sm bg-green-200 inline-block"></span> Подтверждён
         </span>
         <span class="flex items-center gap-1.5">
-            <span class="w-3 h-3 rounded-sm bg-gray-200 inline-block"></span> Отменён
+            <span class="w-3 h-3 rounded-sm bg-gray-200 inline-block"></span> Прошедшие
+        </span>
+        <span class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-sm bg-gray-200 inline-block"></span>
+            <span class="line-through">Отменён</span>
         </span>
     </div>
 
@@ -1059,7 +1087,7 @@ async function exportToExcel() {
         if (!r.ok) throw new Error();
         const data = await r.json();
 
-        const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная' };
+        const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная', expiry: 'Истечение срока' };
         const rows = data.items.map(tx => ({
             'ID':       tx.id,
             'Дата':     fmtDateTime(tx.created_at),
@@ -1103,7 +1131,7 @@ function txTable(items) {
 }
 
 function txRows(items) {
-    const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная' };
+    const typeLabels = { registration: 'Регистрация', birthday: 'День рождения', manual: 'Ручная', expiry: 'Истечение срока' };
     return items.map(tx => {
         const pos   = tx.amount > 0;
         const color = pos ? 'text-green-600' : 'text-red-500';
@@ -1221,6 +1249,7 @@ async function loadSettings() {
         if (!r.ok) throw new Error();
         const s = await r.json();
         document.getElementById('reg-bonus-input').value = s.registration_bonus ?? '500';
+        document.getElementById('bonus-ttl-input').value = s.bonus_ttl_months ?? '3';
         document.getElementById('whatsapp-url-input').value = s.whatsapp_url ?? '';
     } catch {
         const st = document.getElementById('reg-bonus-status');
@@ -1256,6 +1285,45 @@ async function saveRegBonus() {
             status.textContent = val === 0
                 ? 'Сохранено. Бонус за регистрацию отключён.'
                 : `Сохранено. Бонус за регистрацию: ${val} бонусов.`;
+            status.className = 'text-sm mt-2 text-green-600';
+        } else {
+            status.textContent = 'Ошибка при сохранении';
+            status.className = 'text-sm mt-2 text-red-500';
+        }
+        status.classList.remove('hidden');
+    } catch {
+        status.textContent = 'Нет связи с сервером';
+        status.className = 'text-sm mt-2 text-red-500';
+        status.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.textContent = 'Сохранить';
+}
+
+async function saveBonusTtl() {
+    const input  = document.getElementById('bonus-ttl-input');
+    const btn    = document.getElementById('bonus-ttl-btn');
+    const status = document.getElementById('bonus-ttl-status');
+    const val    = parseInt(input.value);
+
+    if (isNaN(val) || val < 0) {
+        status.textContent = 'Введите целое число ≥ 0';
+        status.className = 'text-sm mt-2 text-red-500';
+        status.classList.remove('hidden');
+        return;
+    }
+    status.classList.add('hidden');
+    btn.disabled = true; btn.textContent = 'Сохранение...';
+
+    try {
+        const r = await fetch('/admin/settings/bonus_ttl_months', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: String(val) })
+        });
+        if (r.ok) {
+            status.textContent = val === 0
+                ? 'Сохранено. Новые бонусы не сгорают.'
+                : `Сохранено. Срок жизни новых бонусов: ${val} мес.`;
             status.className = 'text-sm mt-2 text-green-600';
         } else {
             status.textContent = 'Ошибка при сохранении';
@@ -1667,9 +1735,11 @@ const MONTH_NAMES_RU = [
 ];
 
 const HERO_LABELS = {
-    labubu: 'Лабубу', stitch: 'Стач', zootopia: 'Зверополис',
+    labubu: 'Лабубу', stitch: 'Стич', zootopia: 'Зверополис',
     batman: 'Бэтмен', superman: 'Супермен', ironman: 'Железный человек',
-    unicorn: 'Единорожка', deadpool: 'Дедпул'
+    unicorn: 'Единорожка', deadpool: 'Дедпул',
+    huntix: 'Хантрикс', spongebob: 'Спанч Боб и Патрик', sonic: 'Соник',
+    fury_cat: 'Фури Кот', spiderman: 'Человек-паук', lol_doll: 'Кукла LOL'
 };
 
 const PACKAGE_LABELS = {
@@ -1800,14 +1870,29 @@ function renderCalendar(year, month, bookings) {
     lucide.createIcons();
 }
 
+function isBookingPast(b) {
+    if (!b.date || !b.time_end) return false;
+    const endAt = new Date(`${b.date}T${b.time_end}:00`);
+    if (Number.isNaN(endAt.getTime())) return false;
+    return endAt < new Date();
+}
+
 function bookingChip(b) {
-    // Цвет по статусу
     const colorMap = {
         draft:     'bg-blue-50 text-blue-800 border-blue-200 hover:bg-blue-100',
         confirmed: 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100',
         cancelled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200 line-through',
     };
-    const cls = colorMap[b.status] || colorMap.draft;
+    const pastCls = 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200';
+
+    let cls;
+    if (b.status === 'cancelled') {
+        cls = colorMap.cancelled;
+    } else if (isBookingPast(b)) {
+        cls = pastCls;
+    } else {
+        cls = colorMap[b.status] || colorMap.draft;
+    }
 
     return `
         <div onclick="openEditBookingModal(${b.id})"
@@ -2282,13 +2367,19 @@ initAuth(); // авторизация запустит loadStats/loadRecentTx в
                                    focus:outline-none focus:border-purple-500 bg-white">
                         <option value="">— выбрать —</option>
                         <option value="labubu">Лабубу</option>
-                        <option value="stitch">Стач</option>
+                        <option value="stitch">Стич</option>
                         <option value="zootopia">Зверополис</option>
                         <option value="batman">Бэтмен</option>
                         <option value="superman">Супермен</option>
                         <option value="ironman">Железный человек</option>
                         <option value="unicorn">Единорожка</option>
                         <option value="deadpool">Дедпул</option>
+                        <option value="huntix">Хантрикс</option>
+                        <option value="spongebob">Спанч Боб и Патрик</option>
+                        <option value="sonic">Соник</option>
+                        <option value="fury_cat">Фури Кот</option>
+                        <option value="spiderman">Человек-паук</option>
+                        <option value="lol_doll">Кукла LOL</option>
                     </select>
                 </div>
             </div>

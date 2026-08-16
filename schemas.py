@@ -37,6 +37,7 @@ class CustomerResponse(CustomerBase):
     balance: int
     created_at: datetime
     kids: List[KidResponse] = []
+    bonus_ttl_months: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -82,6 +83,7 @@ class TransactionHistoryItem(BaseModel):
     amount: int
     type: TransactionType
     created_at: datetime
+    expires_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -122,6 +124,7 @@ class AdminTransactionItem(BaseModel):
     amount: int
     type: TransactionType
     created_at: datetime
+    expires_at: Optional[datetime] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     cashier_name: Optional[str] = None

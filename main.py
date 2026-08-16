@@ -4,6 +4,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 import secrets
 import json
 import httpx
@@ -12,6 +14,25 @@ import db.models as models
 import schemas
 import crud
 from config import BOT_TOKEN, BOT_USERNAME
+
+logger = logging.getLogger(__name__)
+
+EXPIRE_BONUSES_INTERVAL_SEC = 600  # 10 минут
+
+
+async def _expire_bonuses_loop():
+    """Периодически списывает просроченные бонусы в отдельной сессии БД."""
+    while True:
+        await asyncio.sleep(EXPIRE_BONUSES_INTERVAL_SEC)
+        db = SessionLocal()
+        try:
+            count = crud.expire_overdue_bonuses(db)
+            if count:
+                logger.info("Списано просроченных партий бонусов: %s", count)
+        except Exception:
+            logger.exception("Ошибка при списании просроченных бонусов")
+        finally:
+            db.close()
 
 
 @asynccontextmanager
@@ -23,6 +44,7 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE users ADD COLUMN invite_token VARCHAR",
             "ALTER TABLE users ADD COLUMN username VARCHAR",
             "ALTER TABLE users ADD COLUMN password_hash VARCHAR",
+            "ALTER TABLE transactions ADD COLUMN expires_at DATETIME",
             "UPDATE bookings SET package = 'lite' WHERE package IN ('super', 'premium')",
         ]:
             try:
@@ -34,10 +56,21 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         crud.ensure_default_crm_users(db)
+        crud.get_bonus_ttl_months(db)
+        crud.backfill_transaction_expires_at(db)
+        crud.expire_overdue_bonuses(db)
     finally:
         db.close()
 
-    yield
+    expire_task = asyncio.create_task(_expire_bonuses_loop())
+    try:
+        yield
+    finally:
+        expire_task.cancel()
+        try:
+            await expire_task
+        except asyncio.CancelledError:
+            pass
 
 
 models.Base.metadata.create_all(bind=engine)
@@ -66,14 +99,38 @@ def notify_customer(tg_id: int, amount: int, new_balance: int):
         pass
 
 
-def notify_accrual(tg_id: int, amount: int, new_balance: int):
+def _months_word(n: int) -> str:
+    """Склонение «месяц» для русского языка."""
+    n = abs(n) % 100
+    n1 = n % 10
+    if 11 <= n <= 19:
+        return "месяцев"
+    if n1 == 1:
+        return "месяц"
+    if 2 <= n1 <= 4:
+        return "месяца"
+    return "месяцев"
+
+
+def _ttl_phrase(ttl_months: int) -> str:
+    """Фраза про срок жизни бонусов; при TTL=0 — пустая строка."""
+    if ttl_months <= 0:
+        return ""
+    return (
+        f"\n\nБонусы можно использовать в течение "
+        f"*{ttl_months} {_months_word(ttl_months)}*."
+    )
+
+
+def notify_accrual(tg_id: int, amount: int, new_balance: int, ttl_months: int):
     """Отправляет клиенту уведомление о начислении бонусов."""
     if not tg_id:
         return
     text = (
         f"🎁 *Начисление бонусов*\n\n"
         f"На вашу карту Funky Town начислено: *{amount} бонусов*\n"
-        f"Баланс на счёте: *{new_balance} бонусов*\n\n"
+        f"Баланс на счёте: *{new_balance} бонусов*"
+        f"{_ttl_phrase(ttl_months)}\n\n"
         f"Используйте бонусы при следующем посещении! 🎢"
     )
     try:
@@ -93,7 +150,10 @@ def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_
     db_customer = crud.get_customer_by_phone(db, phone=customer.phone)
     if db_customer:
         raise HTTPException(status_code=400, detail="Этот телефон уже зарегистрирован")
-    return crud.create_customer(db=db, customer=customer)
+    db_customer = crud.create_customer(db=db, customer=customer)
+    ttl = crud.get_bonus_ttl_months(db)
+    response = schemas.CustomerResponse.model_validate(db_customer)
+    return response.model_copy(update={"bonus_ttl_months": ttl})
 
 
 @app.get("/customers/tg/{tg_id}", response_model=schemas.CustomerResponse)
@@ -124,8 +184,14 @@ def make_transaction(
     if result == "insufficient_balance":
         raise HTTPException(status_code=400, detail="Недостаточно бонусов на счёте")
 
-    if result.tg_id and trans.amount < 0:
-        background_tasks.add_task(notify_customer, result.tg_id, trans.amount, result.balance)
+    if result.tg_id:
+        if trans.amount < 0:
+            background_tasks.add_task(notify_customer, result.tg_id, trans.amount, result.balance)
+        elif trans.amount > 0:
+            ttl = crud.get_bonus_ttl_months(db)
+            background_tasks.add_task(
+                notify_accrual, result.tg_id, trans.amount, result.balance, ttl
+            )
 
     return {
         "id": result.id,
@@ -251,10 +317,10 @@ def get_settings(db: Session = Depends(get_db)):
 def update_setting(key: str, body: schemas.SettingUpdate, db: Session = Depends(get_db)):
     """Обновляет значение настройки."""
     from urllib.parse import urlparse
-    allowed_keys = {"registration_bonus", "whatsapp_url"}
+    allowed_keys = {"registration_bonus", "whatsapp_url", "bonus_ttl_months"}
     if key not in allowed_keys:
         raise HTTPException(status_code=400, detail="Неизвестный ключ настройки")
-    if key == "registration_bonus":
+    if key in ("registration_bonus", "bonus_ttl_months"):
         try:
             val = int(body.value)
             if val < 0:
@@ -282,9 +348,10 @@ def accrue_bonus(
         raise HTTPException(status_code=400, detail="Список клиентов пуст")
 
     customers = crud.accrue_bonus_bulk(db, req.customer_ids, req.amount)
+    ttl = crud.get_bonus_ttl_months(db)
     for c in customers:
         if c.tg_id:
-            background_tasks.add_task(notify_accrual, c.tg_id, req.amount, c.balance)
+            background_tasks.add_task(notify_accrual, c.tg_id, req.amount, c.balance, ttl)
 
     return {
         "accrued_count": len(customers),
@@ -292,24 +359,26 @@ def accrue_bonus(
     }
 
 
-def send_tg_broadcast(tg_id: int, message: str, photo_bytes: bytes | None) -> bool:
-    """Отправляет рекламное сообщение клиенту через Telegram."""
+async def send_tg_broadcast(tg_id: int, message: str, photo_bytes: bytes | None) -> bool:
+    """Отправляет рекламное сообщение клиенту через Telegram (без блокировки event loop)."""
+    url_photo = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    url_text = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        if photo_bytes:
-            resp = httpx.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={"chat_id": tg_id, "caption": message, "parse_mode": "Markdown"},
-                files={"photo": ("image.jpg", photo_bytes, "image/jpeg")},
-                timeout=10.0,
-            )
-        else:
-            resp = httpx.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={"chat_id": tg_id, "text": message, "parse_mode": "Markdown"},
-                timeout=10.0,
-            )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if photo_bytes:
+                resp = await client.post(
+                    url_photo,
+                    data={"chat_id": tg_id, "caption": message, "parse_mode": "Markdown"},
+                    files={"photo": ("image.jpg", photo_bytes, "image/jpeg")},
+                )
+            else:
+                resp = await client.post(
+                    url_text,
+                    json={"chat_id": tg_id, "text": message, "parse_mode": "Markdown"},
+                )
         return resp.status_code == 200
-    except Exception:
+    except Exception as exc:
+        logger.warning("Рассылка не доставлена tg_id=%s: %s", tg_id, exc)
         return False
 
 
@@ -343,15 +412,21 @@ async def send_broadcast(
     failed = 0
     no_tg = 0
 
-    for c in customers:
+    logger.info("Рассылка: старт, получателей=%s", len(customers))
+    for i, c in enumerate(customers, start=1):
         if not c.tg_id:
             no_tg += 1
             continue
-        if send_tg_broadcast(c.tg_id, message, photo_bytes):
+        if await send_tg_broadcast(c.tg_id, message, photo_bytes):
             sent += 1
         else:
             failed += 1
+        # Пауза: не блокируем API/бота и не упираемся в лимит Telegram (~30 сообщ/сек)
+        await asyncio.sleep(0.05)
+        if i % 50 == 0:
+            logger.info("Рассылка: прогресс %s/%s, отправлено=%s, ошибок=%s", i, len(customers), sent, failed)
 
+    logger.info("Рассылка: готово, sent=%s failed=%s no_tg=%s", sent, failed, no_tg)
     return {
         "sent_count": sent,
         "failed_count": failed,

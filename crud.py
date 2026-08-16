@@ -4,6 +4,7 @@ import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date
+import calendar
 from db.models import Customer, Kid, Transaction, TransactionType, User, Setting, Booking, BookingStatus, StaffRole
 import schemas
 from config import (
@@ -41,9 +42,136 @@ def get_registration_bonus(db: Session) -> int:
         db.commit()
     return int(row.value)
 
+def get_bonus_ttl_months(db: Session) -> int:
+    """Возвращает срок жизни бонусов в месяцах; при первом вызове инициализирует значением 3."""
+    row = db.query(Setting).filter(Setting.key == "bonus_ttl_months").first()
+    if row is None:
+        row = Setting(key="bonus_ttl_months", value="3")
+        db.add(row)
+        db.commit()
+    return int(row.value)
+
+
+def _add_calendar_months(dt: datetime, months: int) -> datetime:
+    """Добавляет календарные месяцы к дате (с учётом коротких месяцев)."""
+    month = dt.month - 1 + months
+    year = dt.year + month // 12
+    month = month % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def compute_expires_at(db: Session) -> datetime | None:
+    """Срок протухания нового начисления: сейчас UTC + bonus_ttl_months. TTL=0 → None."""
+    ttl = get_bonus_ttl_months(db)
+    if ttl <= 0:
+        return None
+    return _add_calendar_months(datetime.utcnow(), ttl)
+
+
+def _fifo_batch_remainders(transactions: list[Transaction]) -> list[tuple[Transaction, int]]:
+    """
+    Распределяет отрицательные транзакции (касса, expiry) по партиям начисления FIFO.
+    Возвращает список (партия, остаток) в порядке от старых к новым.
+    """
+    batches: list[tuple[Transaction, int]] = []
+    for tx in sorted(transactions, key=lambda t: (t.created_at, t.id)):
+        if tx.amount > 0:
+            batches.append((tx, tx.amount))
+        elif tx.amount < 0:
+            to_allocate = abs(tx.amount)
+            for i, (batch_tx, remaining) in enumerate(batches):
+                if to_allocate <= 0:
+                    break
+                if remaining <= 0:
+                    continue
+                deduct = min(remaining, to_allocate)
+                batches[i] = (batch_tx, remaining - deduct)
+                to_allocate -= deduct
+    return batches
+
+
+def expire_overdue_bonuses(db: Session) -> int:
+    """
+    Списывает просроченные неиспользованные бонусы транзакциями типа expiry.
+    FIFO: расходы распределяются по партиям от старых к новым; сторно = остаток партии.
+    Партии с expires_at IS NULL не затрагиваются. Идемпотентно при повторном запуске.
+    Возвращает число созданных транзакций сторно (списанных партий).
+    """
+    now = datetime.utcnow()
+    expired_count = 0
+
+    customers = db.query(Customer).all()
+    for customer in customers:
+        transactions = (
+            db.query(Transaction)
+            .filter(Transaction.customer_id == customer.id)
+            .order_by(Transaction.created_at, Transaction.id)
+            .all()
+        )
+        batches = _fifo_batch_remainders(transactions)
+        current_balance = customer.balance
+        customer_changed = False
+
+        for batch_tx, remaining in batches:
+            if remaining <= 0:
+                continue
+            if batch_tx.expires_at is None or batch_tx.expires_at > now:
+                continue
+            if batch_tx.type == TransactionType.expiry:
+                continue
+
+            expire_amount = min(remaining, current_balance)
+            if expire_amount <= 0:
+                continue
+
+            db.add(Transaction(
+                customer_id=customer.id,
+                cashier_id=None,
+                amount=-expire_amount,
+                type=TransactionType.expiry,
+                expires_at=None,
+            ))
+            current_balance -= expire_amount
+            expired_count += 1
+            customer_changed = True
+
+        if customer_changed:
+            customer.balance = current_balance
+
+    if expired_count > 0:
+        db.commit()
+
+    return expired_count
+
+
+def backfill_transaction_expires_at(db: Session) -> int:
+    """
+    Разовая простановка expires_at для старых начислений без срока.
+    Идемпотентно: уже заполненные expires_at не трогаются.
+    """
+    expires_at = compute_expires_at(db)
+    if expires_at is None:
+        return 0
+
+    rows = (
+        db.query(Transaction)
+        .filter(Transaction.amount > 0, Transaction.expires_at.is_(None))
+        .all()
+    )
+    for tx in rows:
+        tx.expires_at = expires_at
+    if rows:
+        db.commit()
+    return len(rows)
+
+
 def get_all_settings(db: Session) -> dict:
     rows = db.query(Setting).all()
-    result = {"registration_bonus": str(REGISTRATION_BONUS)}
+    result = {
+        "registration_bonus": str(REGISTRATION_BONUS),
+        "bonus_ttl_months": "3",
+    }
     result.update({r.key: r.value for r in rows})
     return result
 
@@ -83,7 +211,8 @@ def create_customer(db: Session, customer: schemas.CustomerCreate):
             customer_id=db_customer.id,
             cashier_id=None,
             amount=reg_bonus,
-            type=TransactionType.registration
+            type=TransactionType.registration,
+            expires_at=compute_expires_at(db),
         ))
 
     db.commit()
@@ -355,6 +484,7 @@ def get_all_transactions_admin(
             "amount":         tx.amount,
             "type":           tx.type,
             "created_at":     tx.created_at,
+            "expires_at":     tx.expires_at,
             "customer_name":  tx.customer.full_name if tx.customer else None,
             "customer_phone": tx.customer.phone     if tx.customer else None,
             "cashier_name":   tx.cashier.name       if tx.cashier  else None,
@@ -377,6 +507,8 @@ def get_all_transactions_admin(
 
 def accrue_bonus_bulk(db: Session, customer_ids: list[int], amount: int) -> list[Customer]:
     """Начисляет бонусы списку клиентов, создаёт транзакцию для каждого."""
+    expire_overdue_bonuses(db)
+    expires_at = compute_expires_at(db) if amount > 0 else None
     customers = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
     for c in customers:
         c.balance += amount
@@ -384,7 +516,8 @@ def accrue_bonus_bulk(db: Session, customer_ids: list[int], amount: int) -> list
             customer_id=c.id,
             cashier_id=None,
             amount=amount,
-            type=TransactionType.manual
+            type=TransactionType.manual,
+            expires_at=expires_at,
         ))
     db.commit()
     for c in customers:
@@ -393,6 +526,7 @@ def accrue_bonus_bulk(db: Session, customer_ids: list[int], amount: int) -> list
 
 # 4. Провести транзакцию (Изменить баланс)
 def process_transaction(db: Session, trans: schemas.TransactionCreate):
+    expire_overdue_bonuses(db)
     customer = get_customer_by_phone(db, trans.customer_phone)
     if not customer:
         return None
@@ -407,7 +541,8 @@ def process_transaction(db: Session, trans: schemas.TransactionCreate):
         customer_id=customer.id,
         cashier_id=trans.cashier_id,
         amount=trans.amount,
-        type=TransactionType.manual
+        type=TransactionType.manual,
+        expires_at=compute_expires_at(db) if trans.amount > 0 else None,
     )
     db.add(db_transaction)
     db.commit()

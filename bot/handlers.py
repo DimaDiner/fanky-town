@@ -14,34 +14,73 @@ from bot.keyboards import (
 
 router = Router()
 
+# Короткий таймаут: если API занят, бот не должен «молчать» десятки секунд
+_API_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+
+
+async def _api_get(path: str) -> httpx.Response | None:
+    try:
+        async with httpx.AsyncClient(timeout=_API_TIMEOUT) as client:
+            return await client.get(f"{BASE_API_URL}{path}")
+    except Exception:
+        return None
+
 
 async def _get_staff(tg_id: int) -> dict | None:
     """Возвращает данные сотрудника из API или None если не найден."""
     if tg_id in ADMIN_TG_IDS:
         return {"name": "Администратор", "role": "admin"}
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{BASE_API_URL}/staff/tg/{tg_id}")
-    return r.json() if r.status_code == 200 else None
+    r = await _api_get(f"/staff/tg/{tg_id}")
+    return r.json() if r is not None and r.status_code == 200 else None
 
 
 async def _get_customer(tg_id: int) -> dict | None:
     """Возвращает данные клиента из API или None если не найден."""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{BASE_API_URL}/customers/tg/{tg_id}")
-    return r.json() if r.status_code == 200 else None
+    r = await _api_get(f"/customers/tg/{tg_id}")
+    return r.json() if r is not None and r.status_code == 200 else None
 
 
 async def _get_whatsapp_url() -> str | None:
     """Возвращает ссылку на WhatsApp из настроек или None если не задана."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{BASE_API_URL}/admin/settings/")
-        if r.status_code == 200:
-            url = (r.json().get("whatsapp_url") or "").strip()
-            return url or None
-    except Exception:
-        pass
+    r = await _api_get("/admin/settings/")
+    if r is not None and r.status_code == 200:
+        url = (r.json().get("whatsapp_url") or "").strip()
+        return url or None
     return None
+
+
+async def _get_bonus_ttl_months() -> int:
+    """Возвращает срок жизни бонусов в месяцах из настроек (0 — бессрочно)."""
+    r = await _api_get("/admin/settings/")
+    if r is not None and r.status_code == 200:
+        try:
+            return int(r.json().get("bonus_ttl_months", 0))
+        except (TypeError, ValueError):
+            pass
+    return 0
+
+
+def _months_word(n: int) -> str:
+    """Склонение «месяц» для русского языка."""
+    n = abs(n) % 100
+    n1 = n % 10
+    if 11 <= n <= 19:
+        return "месяцев"
+    if n1 == 1:
+        return "месяц"
+    if 2 <= n1 <= 4:
+        return "месяца"
+    return "месяцев"
+
+
+def _ttl_phrase(ttl_months: int) -> str:
+    """Фраза про срок жизни бонусов; при TTL=0 — пустая строка."""
+    if ttl_months <= 0:
+        return ""
+    return (
+        f"\n\nБонусы можно использовать в течение "
+        f"*{ttl_months} {_months_word(ttl_months)}*."
+    )
 
 
 @router.message(CommandStart(deep_link=True))
@@ -55,11 +94,15 @@ async def cmd_start_invite(message: types.Message, command: CommandObject, bot: 
     token = arg[4:]
     tg_user = message.from_user
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{BASE_API_URL}/staff/confirm/{token}",
-            json={"tg_id": tg_user.id, "tg_username": tg_user.username}
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_API_TIMEOUT) as client:
+            response = await client.post(
+                f"{BASE_API_URL}/staff/confirm/{token}",
+                json={"tg_id": tg_user.id, "tg_username": tg_user.username}
+            )
+    except Exception:
+        await message.answer("Сервис временно недоступен. Попробуйте через минуту.")
+        return
 
     if response.status_code == 200:
         staff = response.json()
@@ -188,9 +231,18 @@ async def on_webapp_data(message: types.Message):
         if data.get("status") == "registered":
             balance = data.get("balance", 0)
             name = data.get("name") or "Гость"
+            ttl = data.get("bonus_ttl_months")
+            if ttl is None:
+                ttl = await _get_bonus_ttl_months()
+            else:
+                try:
+                    ttl = int(ttl)
+                except (TypeError, ValueError):
+                    ttl = await _get_bonus_ttl_months()
             await message.answer(
                 f"*{name}, добро пожаловать в Funky Town!*\n\n"
-                f"На счёт зачислено *{balance} приветственных бонусов*",
+                f"На счёт зачислено *{balance} приветственных бонусов*"
+                f"{_ttl_phrase(ttl)}",
                 parse_mode="Markdown"
             )
     except (json.JSONDecodeError, KeyError):

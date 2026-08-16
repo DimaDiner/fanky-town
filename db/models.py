@@ -15,6 +15,7 @@ class TransactionType(str, enum.Enum):
     manual       = "manual"        # Кассир списал/начислил на кассе
     registration = "registration"  # Авто-бонус за регистрацию
     birthday     = "birthday"      # Авто-бонус на ДР
+    expiry       = "expiry"        # Сторно просроченных бонусов
 
 class BookingStatus(str, enum.Enum):
     draft     = "draft"      # Черновик
@@ -22,14 +23,20 @@ class BookingStatus(str, enum.Enum):
     cancelled = "cancelled"  # Отменён
 
 class HeroType(str, enum.Enum):
-    labubu   = "labubu"    # Лабубу
-    stitch   = "stitch"    # Стач
-    zootopia = "zootopia"  # Зверополис
-    batman   = "batman"    # Бэтмен
-    superman = "superman"  # Супермен
-    ironman  = "ironman"   # Железный человек
-    unicorn  = "unicorn"   # Единорожка
-    deadpool = "deadpool"  # Дедпул
+    labubu    = "labubu"     # Лабубу
+    stitch    = "stitch"     # Стич
+    zootopia  = "zootopia"   # Зверополис
+    batman    = "batman"     # Бэтмен
+    superman  = "superman"   # Супермен
+    ironman   = "ironman"    # Железный человек
+    unicorn   = "unicorn"    # Единорожка
+    deadpool  = "deadpool"   # Дедпул
+    huntix    = "huntix"     # Хантрикс
+    spongebob = "spongebob"  # Спанч Боб и Патрик
+    sonic     = "sonic"      # Соник
+    fury_cat  = "fury_cat"   # Фури Кот
+    spiderman = "spiderman"  # Человек-паук
+    lol_doll  = "lol_doll"   # Кукла LOL
 
 class PackageType(str, enum.Enum):
     lite          = "lite"           # Фанки Лайт
@@ -98,6 +105,7 @@ class Transaction(Base):
     cashier_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Кто провел (пусто, если авто-бонус)
     amount = Column(Integer) # Сумма: +500 (начисление) или -500 (списание)
     type = Column(Enum(TransactionType), default=TransactionType.manual)
+    expires_at = Column(DateTime, nullable=True, index=True)  # Срок жизни партии начисления
     created_at = Column(DateTime, default=datetime.utcnow)
 
     customer = relationship("Customer", back_populates="transactions")
