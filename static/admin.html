@@ -626,20 +626,50 @@
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 let currentUser = null; // { id, name, role }
+let authToken = null;
 
 const ROLE_LABELS = { admin: 'Администратор', operator: 'Оператор', booker: 'Кассир' };
 
+async function apiFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (authToken) headers.set('Authorization', 'Bearer ' + authToken);
+    const r = await window.fetch(url, { ...options, headers, credentials: 'include' });
+    if (r.status === 401 && typeof url === 'string' && !url.includes('/admin/auth/')) {
+        authToken = null;
+        currentUser = null;
+        localStorage.removeItem('crm_session');
+        showLoginScreen();
+    }
+    return r;
+}
+
 async function initAuth() {
     const saved = localStorage.getItem('crm_session');
-    if (saved) {
-        try {
-            currentUser = JSON.parse(saved);
-            showMainApp();
-        } catch {
+    if (!saved) {
+        showLoginScreen();
+        return;
+    }
+    try {
+        const data = JSON.parse(saved);
+        authToken = data.token || null;
+        if (!authToken) {
             localStorage.removeItem('crm_session');
             showLoginScreen();
+            return;
         }
-    } else {
+        const r = await apiFetch('/admin/auth/me');
+        if (!r.ok) {
+            authToken = null;
+            localStorage.removeItem('crm_session');
+            showLoginScreen();
+            return;
+        }
+        currentUser = await r.json();
+        localStorage.setItem('crm_session', JSON.stringify({ ...currentUser, token: authToken }));
+        showMainApp();
+    } catch {
+        authToken = null;
+        localStorage.removeItem('crm_session');
         showLoginScreen();
     }
 }
@@ -663,15 +693,17 @@ async function doLogin() {
     errEl.classList.add('hidden');
 
     try {
-        const r = await fetch('/admin/auth/', {
+        const r = await apiFetch('/admin/auth/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password }),
         });
 
         if (r.ok) {
-            currentUser = await r.json();
-            localStorage.setItem('crm_session', JSON.stringify(currentUser));
+            const data = await r.json();
+            authToken = data.token;
+            currentUser = { id: data.id, name: data.name, role: data.role };
+            localStorage.setItem('crm_session', JSON.stringify({ ...currentUser, token: authToken }));
             showMainApp();
         } else {
             const err = await r.json();
@@ -708,8 +740,10 @@ function showMainApp() {
     applyRoleRestrictions(currentUser.role);
 
     lucide.createIcons();
-    loadStats();
-    loadRecentTx();
+    if (currentUser.role === 'admin') {
+        loadStats();
+        loadRecentTx();
+    }
 }
 
 function applyRoleRestrictions(role) {
@@ -731,8 +765,12 @@ function applyRoleRestrictions(role) {
     // admin и booker — полный доступ на вкладке «Бронирования»
 }
 
-function logout() {
+async function logout() {
+    try {
+        await apiFetch('/admin/auth/logout', { method: 'POST' });
+    } catch { /* сеть не должна блокировать выход */ }
     localStorage.removeItem('crm_session');
+    authToken = null;
     currentUser = null;
     showLoginScreen();
     document.getElementById('login-username').value = '';
@@ -792,7 +830,7 @@ function refreshAll() {
 async function loadStats() {
     const grid = document.getElementById('stats-grid');
     try {
-        const r = await fetch('/admin/stats/');
+        const r = await apiFetch('/admin/stats/');
         if (!r.ok) throw new Error();
         const s = await r.json();
 
@@ -832,7 +870,7 @@ async function loadStats() {
 async function loadRecentTx() {
     const el = document.getElementById('recent-tx');
     try {
-        const r = await fetch('/admin/transactions/?per_page=5');
+        const r = await apiFetch('/admin/transactions/?per_page=5');
         if (!r.ok) throw new Error();
         const data = await r.json();
         const items = data.items;
@@ -856,7 +894,7 @@ async function loadCustomers(search = '') {
 
     try {
         const url = search ? `/admin/customers/?search=${encodeURIComponent(search)}` : '/admin/customers/';
-        const r = await fetch(url);
+        const r = await apiFetch(url);
         if (!r.ok) throw new Error();
         customersData = await r.json();
 
@@ -985,7 +1023,7 @@ async function loadTransactions() {
     if (txDateTo)   params.set('date_to',   txDateTo);
 
     try {
-        const r = await fetch(`/admin/transactions/?${params}`);
+        const r = await apiFetch(`/admin/transactions/?${params}`);
         if (!r.ok) throw new Error();
         const data = await r.json();
 
@@ -1083,7 +1121,7 @@ async function exportToExcel() {
     if (txDateTo)   params.set('date_to',   txDateTo);
 
     try {
-        const r = await fetch(`/admin/transactions/?${params}`);
+        const r = await apiFetch(`/admin/transactions/?${params}`);
         if (!r.ok) throw new Error();
         const data = await r.json();
 
@@ -1154,7 +1192,7 @@ function txRows(items) {
 async function loadStaff() {
     const tbody = document.getElementById('staff-table');
     try {
-        const r = await fetch('/admin/staff/');
+        const r = await apiFetch('/admin/staff/');
         if (!r.ok) throw new Error();
         const staff = await r.json();
 
@@ -1205,7 +1243,7 @@ async function addStaff() {
 
     btn.disabled = true; btn.textContent = 'Добавляем...';
     try {
-        const r = await fetch('/admin/staff/', {
+        const r = await apiFetch('/admin/staff/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, tg_username: username, role: document.getElementById('staff-role').value })
@@ -1229,7 +1267,7 @@ async function addStaff() {
 
 async function deactivateStaff(id) {
     if (!confirm('Деактивировать этого сотрудника?')) return;
-    await fetch(`/admin/staff/${id}/deactivate`, { method: 'PATCH' });
+    await apiFetch(`/admin/staff/${id}/deactivate`, { method: 'PATCH' });
     loadStaff();
 }
 
@@ -1245,7 +1283,7 @@ function copyInvite() {
 
 async function loadSettings() {
     try {
-        const r = await fetch('/admin/settings/');
+        const r = await apiFetch('/admin/settings/');
         if (!r.ok) throw new Error();
         const s = await r.json();
         document.getElementById('reg-bonus-input').value = s.registration_bonus ?? '500';
@@ -1276,7 +1314,7 @@ async function saveRegBonus() {
     btn.disabled = true; btn.textContent = 'Сохранение...';
 
     try {
-        const r = await fetch('/admin/settings/registration_bonus', {
+        const r = await apiFetch('/admin/settings/registration_bonus', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value: String(val) })
@@ -1315,7 +1353,7 @@ async function saveBonusTtl() {
     btn.disabled = true; btn.textContent = 'Сохранение...';
 
     try {
-        const r = await fetch('/admin/settings/bonus_ttl_months', {
+        const r = await apiFetch('/admin/settings/bonus_ttl_months', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value: String(val) })
@@ -1359,7 +1397,7 @@ async function saveWhatsappUrl() {
     btn.disabled = true; btn.textContent = 'Сохранение...';
 
     try {
-        const r = await fetch('/admin/settings/whatsapp_url', {
+        const r = await apiFetch('/admin/settings/whatsapp_url', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value: url })
@@ -1386,7 +1424,7 @@ async function saveWhatsappUrl() {
 async function loadAccrueCustomers() {
     const list = document.getElementById('accrue-customer-list');
     try {
-        const r = await fetch('/admin/customers/');
+        const r = await apiFetch('/admin/customers/');
         if (!r.ok) throw new Error();
         accrueCustomers = await r.json();
         renderAccrueList(accrueCustomers);
@@ -1480,7 +1518,7 @@ async function submitAccrue() {
     lucide.createIcons();
 
     try {
-        const r = await fetch('/admin/bonus/accrue', {
+        const r = await apiFetch('/admin/bonus/accrue', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ customer_ids: ids, amount })
@@ -1520,7 +1558,7 @@ let broadcastImageFile = null;
 async function loadBroadcastCustomers() {
     const list = document.getElementById('bc-customer-list');
     try {
-        const r = await fetch('/admin/customers/');
+        const r = await apiFetch('/admin/customers/');
         if (!r.ok) throw new Error();
         broadcastCustomers = await r.json();
         renderBroadcastList(broadcastCustomers);
@@ -1648,7 +1686,7 @@ async function submitBroadcast() {
         formData.append('message', message);
         if (broadcastImageFile) formData.append('image', broadcastImageFile);
 
-        const r = await fetch('/admin/broadcast/', { method: 'POST', body: formData });
+        const r = await apiFetch('/admin/broadcast/', { method: 'POST', body: formData });
 
         if (r.ok) {
             const data = await r.json();
@@ -1765,7 +1803,7 @@ async function loadBookings() {
     const grid = document.getElementById('booking-calendar-grid');
     grid.innerHTML = '<div class="col-span-7 py-16 text-center text-gray-400 text-sm">Загрузка...</div>';
     try {
-        const r = await fetch(`/admin/bookings/?year=${calendarYear}&month=${calendarMonth}`);
+        const r = await apiFetch(`/admin/bookings/?year=${calendarYear}&month=${calendarMonth}`);
         if (!r.ok) throw new Error();
         calendarBookings = await r.json();
         renderCalendar(calendarYear, calendarMonth, calendarBookings);
@@ -1937,7 +1975,7 @@ async function openEditBookingModal(bookingId) {
     lucide.createIcons();
 
     try {
-        const r = await fetch(`/admin/bookings/${bookingId}`);
+        const r = await apiFetch(`/admin/bookings/${bookingId}`);
         if (!r.ok) { showToast('Не удалось загрузить бронирование', 'error'); return; }
         fillBookingForm(await r.json());
     } catch {
@@ -2092,7 +2130,7 @@ async function saveBooking() {
     const method = editingBookingId ? 'PATCH' : 'POST';
 
     try {
-        const r = await fetch(url, {
+        const r = await apiFetch(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
@@ -2123,7 +2161,7 @@ async function deleteBooking() {
     if (!confirm('Отменить бронирование?\n\nОно будет переведено в статус «Отменён» (запись сохранится в истории).')) return;
 
     try {
-        const r = await fetch(`/admin/bookings/${editingBookingId}`, { method: 'DELETE' });
+        const r = await apiFetch(`/admin/bookings/${editingBookingId}`, { method: 'DELETE' });
         if (r.ok) {
             closeBookingModal();
             loadBookings();
@@ -2175,7 +2213,7 @@ async function checkBookingConflict() {
     try {
         const params = new URLSearchParams({ date, time_start: start, time_end: end });
         if (editingBookingId) params.set('exclude_id', editingBookingId);
-        const r = await fetch(`/admin/bookings/check-conflict?${params}`);
+        const r = await apiFetch(`/admin/bookings/check-conflict?${params}`);
         if (!r.ok) return;
         const result = await r.json();
         if (result.conflict && result.conflicting_booking) {

@@ -1,5 +1,5 @@
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Form, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Form, UploadFile, File, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -13,7 +13,8 @@ from db.database import engine, Base, get_db, SessionLocal
 import db.models as models
 import schemas
 import crud
-from config import BOT_TOKEN, BOT_USERNAME
+from config import BOT_TOKEN, BOT_USERNAME, DEBUG
+import auth
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,13 @@ async def lifespan(app: FastAPI):
 
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Funky Town Bonus API", lifespan=lifespan)
+app = FastAPI(
+    title="Funky Town Bonus API",
+    lifespan=lifespan,
+    docs_url="/docs" if DEBUG else None,
+    redoc_url="/redoc" if DEBUG else None,
+    openapi_url="/openapi.json" if DEBUG else None,
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -146,18 +153,44 @@ def notify_accrual(tg_id: int, amount: int, new_balance: int, ttl_months: int):
 # --- ЭНДПОИНТЫ ---
 
 @app.post("/customers/", response_model=schemas.CustomerResponse)
-def create_customer(customer: schemas.CustomerCreate, db: Session = Depends(get_db)):
-    db_customer = crud.get_customer_by_phone(db, phone=customer.phone)
+def create_customer(
+    customer: schemas.CustomerCreate,
+    db: Session = Depends(get_db),
+    tg_user: auth.TelegramWebUser = Depends(auth.get_telegram_user),
+):
+    payload = customer.model_copy(update={"tg_id": tg_user.id})
+    if crud.get_customer_by_tg_id(db, tg_id=tg_user.id):
+        raise HTTPException(status_code=400, detail="Этот Telegram уже зарегистрирован")
+    db_customer = crud.get_customer_by_phone(db, phone=payload.phone)
     if db_customer:
         raise HTTPException(status_code=400, detail="Этот телефон уже зарегистрирован")
-    db_customer = crud.create_customer(db=db, customer=customer)
+    db_customer = crud.create_customer(db=db, customer=payload)
     ttl = crud.get_bonus_ttl_months(db)
     response = schemas.CustomerResponse.model_validate(db_customer)
     return response.model_copy(update={"bonus_ttl_months": ttl})
 
 
+@app.get("/customers/me", response_model=schemas.CustomerResponse)
+def read_customer_me(
+    tg_user: auth.TelegramWebUser = Depends(auth.get_telegram_user),
+    db: Session = Depends(get_db),
+):
+    db_customer = crud.get_customer_by_tg_id(db, tg_id=tg_user.id)
+    if db_customer is None:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    return db_customer
+
+
 @app.get("/customers/tg/{tg_id}", response_model=schemas.CustomerResponse)
-def read_customer_by_tg(tg_id: int, db: Session = Depends(get_db)):
+def read_customer_by_tg(
+    tg_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if not auth.is_internal_request(request):
+        tg_user = auth.get_telegram_user(request)
+        if tg_user.id != tg_id:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
     db_customer = crud.get_customer_by_tg_id(db, tg_id=tg_id)
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Клиент не найден")
@@ -165,7 +198,11 @@ def read_customer_by_tg(tg_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/customers/{phone}", response_model=schemas.CustomerResponse)
-def read_customer(phone: str, db: Session = Depends(get_db)):
+def read_customer(
+    phone: str,
+    db: Session = Depends(get_db),
+    _cashier: auth.CashierContext = Depends(auth.require_cashier),
+):
     db_customer = crud.get_customer_by_phone(db, phone=phone)
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Клиент не найден")
@@ -176,22 +213,20 @@ def read_customer(phone: str, db: Session = Depends(get_db)):
 def make_transaction(
     trans: schemas.TransactionCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    cashier: auth.CashierContext = Depends(auth.require_cashier),
 ):
-    result = crud.process_transaction(db, trans)
+    if trans.amount >= 0:
+        raise HTTPException(status_code=400, detail="Касса может только списывать бонусы")
+    payload = trans.model_copy(update={"cashier_id": cashier.staff.id if cashier.staff else None})
+    result = crud.process_transaction(db, payload)
     if result is None:
         raise HTTPException(status_code=404, detail="Клиент не найден")
     if result == "insufficient_balance":
         raise HTTPException(status_code=400, detail="Недостаточно бонусов на счёте")
 
     if result.tg_id:
-        if trans.amount < 0:
-            background_tasks.add_task(notify_customer, result.tg_id, trans.amount, result.balance)
-        elif trans.amount > 0:
-            ttl = crud.get_bonus_ttl_months(db)
-            background_tasks.add_task(
-                notify_accrual, result.tg_id, trans.amount, result.balance, ttl
-            )
+        background_tasks.add_task(notify_customer, result.tg_id, payload.amount, result.balance)
 
     return {
         "id": result.id,
@@ -201,7 +236,12 @@ def make_transaction(
 
 
 @app.patch("/customers/{customer_id}/profile", response_model=schemas.CustomerResponse)
-def update_customer_profile(customer_id: int, data: schemas.CustomerProfileUpdate, db: Session = Depends(get_db)):
+def update_customer_profile(
+    customer_id: int,
+    data: schemas.CustomerProfileUpdate,
+    db: Session = Depends(get_db),
+    _customer: models.Customer = Depends(auth.require_own_customer),
+):
     customer = crud.update_customer_profile(db, customer_id, data.full_name)
     if not customer:
         raise HTTPException(status_code=404, detail="Клиент не найден")
@@ -209,7 +249,12 @@ def update_customer_profile(customer_id: int, data: schemas.CustomerProfileUpdat
 
 
 @app.post("/customers/{customer_id}/kids", response_model=schemas.KidResponse)
-def add_kid(customer_id: int, kid: schemas.KidCreate, db: Session = Depends(get_db)):
+def add_kid(
+    customer_id: int,
+    kid: schemas.KidCreate,
+    db: Session = Depends(get_db),
+    _customer: models.Customer = Depends(auth.require_own_customer),
+):
     result = crud.add_kid_to_customer(db, customer_id, kid)
     if not result:
         raise HTTPException(status_code=404, detail="Клиент не найден")
@@ -217,14 +262,31 @@ def add_kid(customer_id: int, kid: schemas.KidCreate, db: Session = Depends(get_
 
 
 @app.get("/customers/{customer_id}/transactions", response_model=list[schemas.TransactionHistoryItem])
-def get_transactions(customer_id: int, limit: int = 10, db: Session = Depends(get_db)):
+def get_transactions(
+    customer_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    _customer: models.Customer = Depends(auth.require_own_customer),
+):
     return crud.get_customer_transactions(db, customer_id, limit)
 
 
-# --- ПЕРСОНАЛ (для бота) ---
+# --- ПЕРСОНАЛ (для бота и кассы) ---
+
+@app.get("/staff/me", response_model=schemas.StaffResponse)
+def get_staff_me(cashier: auth.CashierContext = Depends(auth.require_cashier)):
+    """Касса узнаёт свою карточку по подписанному initData."""
+    if not cashier.staff:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    return cashier.staff
+
 
 @app.get("/staff/tg/{tg_id}", response_model=schemas.StaffResponse)
-def get_staff_by_tg(tg_id: int, db: Session = Depends(get_db)):
+def get_staff_by_tg(
+    tg_id: int,
+    db: Session = Depends(get_db),
+    _internal: bool = Depends(auth.require_internal),
+):
     """Бот проверяет роль пользователя перед открытием терминала."""
     staff = crud.get_staff_by_tg_id(db, tg_id)
     if not staff:
@@ -233,7 +295,12 @@ def get_staff_by_tg(tg_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/staff/confirm/{token}", response_model=schemas.StaffResponse)
-def confirm_invite(token: str, body: schemas.StaffConfirm, db: Session = Depends(get_db)):
+def confirm_invite(
+    token: str,
+    body: schemas.StaffConfirm,
+    db: Session = Depends(get_db),
+    _internal: bool = Depends(auth.require_internal),
+):
     """Кассир перешёл по invite-ссылке — фиксируем его tg_id."""
     staff = crud.get_staff_by_token(db, token)
     if not staff:
@@ -251,12 +318,19 @@ def admin_panel():
 
 
 @app.get("/admin/stats/", response_model=schemas.AdminStatsExtended)
-def admin_stats(db: Session = Depends(get_db)):
+def admin_stats(
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     return crud.get_admin_stats(db)
 
 
 @app.get("/admin/customers/", response_model=list[schemas.AdminCustomerItem])
-def admin_customers(search: str = None, db: Session = Depends(get_db)):
+def admin_customers(
+    search: str = None,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     return crud.get_all_customers_admin(db, search)
 
 
@@ -270,6 +344,7 @@ def admin_transactions(
     date_to: str = None,
     export: bool = False,
     db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
 ):
     return crud.get_all_transactions_admin(
         db,
@@ -284,12 +359,19 @@ def admin_transactions(
 
 
 @app.get("/admin/staff/", response_model=list[schemas.StaffResponse])
-def list_staff(db: Session = Depends(get_db)):
+def list_staff(
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     return crud.get_all_staff(db)
 
 
 @app.post("/admin/staff/", response_model=schemas.StaffInviteResponse)
-def create_staff(staff: schemas.StaffCreate, db: Session = Depends(get_db)):
+def create_staff(
+    staff: schemas.StaffCreate,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     token = secrets.token_urlsafe(16)
     db_user = crud.create_staff(db, staff, token)
     invite_link = f"https://t.me/{BOT_USERNAME}?start=inv_{token}"
@@ -300,7 +382,11 @@ def create_staff(staff: schemas.StaffCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/admin/staff/{staff_id}/deactivate", response_model=schemas.StaffResponse)
-def deactivate_staff(staff_id: int, db: Session = Depends(get_db)):
+def deactivate_staff(
+    staff_id: int,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     staff = crud.deactivate_staff(db, staff_id)
     if not staff:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
@@ -308,13 +394,21 @@ def deactivate_staff(staff_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/admin/settings/")
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(
+    db: Session = Depends(get_db),
+    _user: models.User | None = Depends(auth.require_admin_or_internal),
+):
     """Возвращает все системные настройки."""
     return crud.get_all_settings(db)
 
 
 @app.patch("/admin/settings/{key}")
-def update_setting(key: str, body: schemas.SettingUpdate, db: Session = Depends(get_db)):
+def update_setting(
+    key: str,
+    body: schemas.SettingUpdate,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
+):
     """Обновляет значение настройки."""
     from urllib.parse import urlparse
     allowed_keys = {"registration_bonus", "whatsapp_url", "bonus_ttl_months"}
@@ -339,7 +433,8 @@ def update_setting(key: str, body: schemas.SettingUpdate, db: Session = Depends(
 def accrue_bonus(
     req: schemas.BonusAccrueRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
 ):
     """Начисляет бонусы выбранным клиентам и отправляет им уведомления."""
     if req.amount <= 0:
@@ -388,6 +483,7 @@ async def send_broadcast(
     message: str = Form(...),
     image: UploadFile = File(None),
     db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_admin),
 ):
     """Отправляет рекламное сообщение выбранным клиентам в Telegram."""
     try:
@@ -439,16 +535,41 @@ async def send_broadcast(
 # АВТОРИЗАЦИЯ CRM
 # ══════════════════════════════════════════════
 
-@app.post("/admin/auth/", response_model=schemas.CRMUserResponse)
-def crm_auth(body: schemas.CRMLoginRequest, db: Session = Depends(get_db)):
+@app.post("/admin/auth/", response_model=schemas.CRMAuthResponse)
+def crm_auth(
+    body: schemas.CRMLoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """
     Авторизация в CRM по логину и паролю.
     Доступ разрешён для ролей: admin, operator, booker.
     """
     staff = crud.authenticate_crm_user(db, body.username, body.password)
     if not staff:
-        raise HTTPException(status_code=403, detail="Неверный логин или пароль")
-    return staff
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    token = auth.create_session_token(staff)
+    auth.set_session_cookie(request, response, token)
+    return schemas.CRMAuthResponse(
+        id=staff.id,
+        name=staff.name,
+        role=staff.role,
+        token=token,
+    )
+
+
+@app.get("/admin/auth/me", response_model=schemas.CRMUserResponse)
+def crm_me(_user: models.User = Depends(auth.get_current_crm_user)):
+    """Проверяет текущую сессию и возвращает пользователя."""
+    return _user
+
+
+@app.post("/admin/auth/logout")
+def crm_logout(request: Request, response: Response):
+    """Сбрасывает cookie сессии."""
+    auth.clear_session_cookie(request, response)
+    return {"ok": True}
 
 
 # ══════════════════════════════════════════════
@@ -462,6 +583,7 @@ def check_booking_conflict(
     time_end: str,
     exclude_id: int = None,
     db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_read),
 ):
     """
     Проверяет конфликт времени до создания/обновления брони.
@@ -485,6 +607,7 @@ def list_bookings(
     year: int = None,
     month: int = None,
     db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_read),
 ):
     """
     Возвращает все брони за указанный месяц.
@@ -500,7 +623,11 @@ def list_bookings(
 
 
 @app.post("/admin/bookings/", response_model=schemas.BookingResponse, status_code=201)
-def create_booking(booking: schemas.BookingCreate, db: Session = Depends(get_db)):
+def create_booking(
+    booking: schemas.BookingCreate,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_write),
+):
     """Создаёт новое бронирование. Статус выбирается администратором (по умолчанию draft)."""
     try:
         return crud.create_booking(db, booking)
@@ -509,7 +636,11 @@ def create_booking(booking: schemas.BookingCreate, db: Session = Depends(get_db)
 
 
 @app.get("/admin/bookings/{booking_id}", response_model=schemas.BookingResponse)
-def get_booking(booking_id: int, db: Session = Depends(get_db)):
+def get_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_read),
+):
     booking = crud.get_booking_by_id(db, booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Бронирование не найдено")
@@ -517,7 +648,12 @@ def get_booking(booking_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/admin/bookings/{booking_id}", response_model=schemas.BookingResponse)
-def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = Depends(get_db)):
+def update_booking(
+    booking_id: int,
+    data: schemas.BookingUpdate,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_write),
+):
     """Обновляет любые поля брони. Все поля опциональны."""
     try:
         booking = crud.update_booking(db, booking_id, data)
@@ -533,6 +669,7 @@ def update_booking_status(
     booking_id: int,
     data: schemas.BookingStatusUpdate,
     db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_write),
 ):
     """Быстрая смена статуса без передачи всех полей. Все переходы разрешены."""
     booking = crud.update_booking_status(db, booking_id, data.status)
@@ -542,7 +679,11 @@ def update_booking_status(
 
 
 @app.delete("/admin/bookings/{booking_id}")
-def delete_booking(booking_id: int, db: Session = Depends(get_db)):
+def delete_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    _user: models.User = Depends(auth.require_bookings_write),
+):
     """
     Мягкое удаление: переводит бронь в статус 'cancelled'.
     Запись физически не удаляется из БД.

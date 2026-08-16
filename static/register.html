@@ -46,11 +46,6 @@
         tg.expand();
         tg.ready();
 
-        // tg_id передаётся ботом прямо в URL (?tg_id=XXXX) — работает на любом клиенте
-        const urlParams = new URLSearchParams(window.location.search);
-        const TG_ID = parseInt(urlParams.get('tg_id') || '0')
-            || (tg.initDataUnsafe?.user?.id ?? 0); // фолбэк на initDataUnsafe
-
         function monthsWord(n) {
             n = Math.abs(n) % 100;
             const n1 = n % 10;
@@ -90,8 +85,8 @@
                 return;
             }
 
-            if (!TG_ID) {
-                tg.showAlert("Не удалось определить ваш Telegram ID. Закройте анкету и откройте снова через кнопку «📝 Регистрация».");
+            if (!tg.initData) {
+                tg.showAlert("Откройте анкету через кнопку в боте Funky Town.");
                 return;
             }
 
@@ -108,7 +103,6 @@
             const payload = {
                 phone: phone,
                 full_name: fullName,
-                tg_id: TG_ID,
                 kids: kids
             };
 
@@ -119,7 +113,10 @@
             try {
                 const response = await fetch('/customers/', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'tma ' + tg.initData,
+                    },
                     body: JSON.stringify(payload)
                 });
 

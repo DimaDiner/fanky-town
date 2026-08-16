@@ -18,6 +18,15 @@
         <span class="text-2xl">🎢</span>
     </div>
 
+    <!-- ЭКРАН 0: Нет доступа -->
+    <div id="screen-denied" class="p-4 hidden">
+        <div class="bg-white rounded-2xl shadow p-6 mt-2 text-center">
+            <p class="text-5xl mb-3">🔒</p>
+            <h2 class="text-lg font-bold text-gray-800 mb-2">Нет доступа</h2>
+            <p id="denied-text" class="text-sm text-gray-500">Откройте терминал через бота Funky Town</p>
+        </div>
+    </div>
+
     <!-- ЭКРАН 1: Поиск клиента -->
     <div id="screen-search" class="p-4">
         <div class="bg-white rounded-2xl shadow p-5 mt-2">
@@ -131,35 +140,45 @@
         tg.expand();
         tg.ready();
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const CASHIER_TG_ID = parseInt(urlParams.get('tg_id') || '0');
-
         let currentCustomer = null;
         let CASHIER_DB_ID = null;
 
-        // Загружаем DB-id кассира по tg_id, чтобы фиксировать его в транзакции
-        (async function loadCashierId() {
-            if (!CASHIER_TG_ID) return;
+        function apiFetch(url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            headers.set('ngrok-skip-browser-warning', '1');
+            if (tg.initData) headers.set('Authorization', 'tma ' + tg.initData);
+            return fetch(url, { ...options, headers });
+        }
+
+        function showAccessDenied(message) {
+            document.getElementById('denied-text').textContent = message;
+            showScreen('denied');
+        }
+
+        async function initCashier() {
+            if (!tg.initData) {
+                showAccessDenied('Откройте терминал через бота Funky Town');
+                return;
+            }
             try {
-                const r = await apiFetch(`/staff/tg/${CASHIER_TG_ID}`);
+                const r = await apiFetch('/staff/me');
+                if (r.status === 401 || r.status === 403) {
+                    showAccessDenied('Нет доступа к терминалу кассира');
+                    return;
+                }
                 if (r.ok) {
                     const staff = await r.json();
                     CASHIER_DB_ID = staff.id;
                 }
-            } catch (_) {}
-        })();
-
-        // Обёртка над fetch: обходит ngrok-заглушку на iOS
-        function apiFetch(url, options = {}) {
-            const headers = {
-                'ngrok-skip-browser-warning': '1',
-                ...(options.headers || {})
-            };
-            return fetch(url, { ...options, headers });
+            } catch (_) {
+                showAccessDenied('Нет связи с сервером');
+            }
         }
 
+        initCashier();
+
         function showScreen(name) {
-            ['search', 'customer', 'success'].forEach(s => {
+            ['search', 'customer', 'success', 'denied'].forEach(s => {
                 document.getElementById(`screen-${s}`).classList.add('hidden');
             });
             document.getElementById(`screen-${name}`).classList.remove('hidden');
@@ -196,6 +215,8 @@
                     showScreen('customer');
                 } else if (response.status === 404) {
                     showError('search-error', 'Клиент не найден. Проверьте номер.');
+                } else if (response.status === 401 || response.status === 403) {
+                    showAccessDenied('Нет доступа к терминалу кассира');
                 } else {
                     showError('search-error', 'Ошибка сервера. Попробуйте снова.');
                 }
@@ -268,6 +289,9 @@
                 } else {
                     const error = await response.json();
                     showError('deduct-error', error.detail || 'Ошибка при списании');
+                    if (response.status === 401 || response.status === 403) {
+                        showAccessDenied('Нет доступа к терминалу кассира');
+                    }
                     btn.disabled = false;
                     btn.textContent = '💸 Списать бонусы';
                 }

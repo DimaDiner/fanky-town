@@ -5,7 +5,7 @@ from aiogram.filters.command import CommandObject
 from aiogram.types import MenuButtonWebApp
 from aiogram.types.web_app_info import WebAppInfo
 import httpx
-from config import BASE_API_URL, ADMIN_TG_IDS, WEBAPP_URL
+from config import BASE_API_URL, ADMIN_TG_IDS, WEBAPP_URL, INTERNAL_API_SECRET
 from bot.keyboards import (
     get_client_nav_keyboard,
     get_client_welcome_inline_keyboard,
@@ -20,8 +20,9 @@ _API_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
 
 async def _api_get(path: str) -> httpx.Response | None:
     try:
+        headers = {"X-Internal-Token": INTERNAL_API_SECRET} if INTERNAL_API_SECRET else {}
         async with httpx.AsyncClient(timeout=_API_TIMEOUT) as client:
-            return await client.get(f"{BASE_API_URL}{path}")
+            return await client.get(f"{BASE_API_URL}{path}", headers=headers)
     except Exception:
         return None
 
@@ -98,7 +99,8 @@ async def cmd_start_invite(message: types.Message, command: CommandObject, bot: 
         async with httpx.AsyncClient(timeout=_API_TIMEOUT) as client:
             response = await client.post(
                 f"{BASE_API_URL}/staff/confirm/{token}",
-                json={"tg_id": tg_user.id, "tg_username": tg_user.username}
+                json={"tg_id": tg_user.id, "tg_username": tg_user.username},
+                headers={"X-Internal-Token": INTERNAL_API_SECRET} if INTERNAL_API_SECRET else {},
             )
     except Exception:
         await message.answer("Сервис временно недоступен. Попробуйте через минуту.")

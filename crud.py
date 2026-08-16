@@ -183,6 +183,10 @@ def get_customer_by_phone(db: Session, phone: str):
 def get_customer_by_tg_id(db: Session, tg_id: int):
     return db.query(Customer).filter(Customer.tg_id == tg_id).first()
 
+
+def get_customer_by_id(db: Session, customer_id: int) -> Customer | None:
+    return db.query(Customer).filter(Customer.id == customer_id).first()
+
 # 3. Создать нового клиента (Регистрация)
 def create_customer(db: Session, customer: schemas.CustomerCreate):
     reg_bonus = get_registration_bonus(db)
@@ -266,6 +270,10 @@ def _verify_password(password: str, password_hash: str) -> bool:
         "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
     )
     return secrets.compare_digest(digest.hex(), expected)
+
+
+def get_staff_by_id(db: Session, staff_id: int) -> User | None:
+    return db.query(User).filter(User.id == staff_id).first()
 
 
 def get_staff_by_username(db: Session, username: str) -> User | None:

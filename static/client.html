@@ -257,16 +257,13 @@
         tg.expand();
         tg.ready();
 
-        const params = new URLSearchParams(window.location.search);
-        const TG_ID  = parseInt(params.get('tg_id') || '0') || (tg.initDataUnsafe?.user?.id ?? 0);
-
         let customer  = null;
         let activeTab = 'home';
 
         // ─── INIT ───────────────────────────────────────────────────
 
         async function init() {
-            if (!TG_ID) {
+            if (!tg.initData) {
                 document.getElementById('screen-loading').innerHTML = `
                     <div class="flex flex-col items-center justify-center min-h-screen text-white p-8 text-center">
                         <div class="text-5xl mb-4">😕</div>
@@ -276,7 +273,7 @@
                 return;
             }
             try {
-                const r = await apiFetch(`/customers/tg/${TG_ID}`);
+                const r = await apiFetch('/customers/me');
                 if (r.ok) {
                     customer = await r.json();
                     renderAccount();
@@ -284,6 +281,13 @@
                     loadTransactions();
                 } else if (r.status === 404) {
                     showScreen('register');
+                } else if (r.status === 401) {
+                    document.getElementById('screen-loading').innerHTML = `
+                    <div class="flex flex-col items-center justify-center min-h-screen text-white p-8 text-center">
+                        <div class="text-5xl mb-4">😕</div>
+                        <p class="font-bold text-lg">Откройте приложение через бота</p>
+                        <p class="text-purple-200 text-sm mt-2">Нажмите /start в боте Funky Town</p>
+                    </div>`;
                 } else {
                     throw new Error();
                 }
@@ -578,7 +582,7 @@
             const btn   = document.getElementById('reg-btn');
 
             if (!phone) { showError(errEl, 'Введите полный номер телефона (+7 и 10 цифр)'); return; }
-            if (!TG_ID) { showError(errEl, 'Не удалось определить Telegram ID. Закройте и откройте снова.'); return; }
+            if (!tg.initData) { showError(errEl, 'Откройте приложение через бота'); return; }
             errEl.classList.add('hidden');
 
             const kids = [];
@@ -596,7 +600,7 @@
                 const r = await apiFetch('/customers/', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, full_name: name, tg_id: TG_ID, kids })
+                    body: JSON.stringify({ phone, full_name: name, kids })
                 });
 
                 if (r.ok) {
@@ -621,10 +625,9 @@
 
         // Обёртка над fetch: добавляет заголовок для обхода ngrok-заглушки на iOS
         function apiFetch(url, options = {}) {
-            const headers = {
-                'ngrok-skip-browser-warning': '1',
-                ...(options.headers || {})
-            };
+            const headers = new Headers(options.headers || {});
+            headers.set('ngrok-skip-browser-warning', '1');
+            if (tg.initData) headers.set('Authorization', 'tma ' + tg.initData);
             return fetch(url, { ...options, headers });
         }
 

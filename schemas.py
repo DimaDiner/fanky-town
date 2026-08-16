@@ -325,3 +325,7 @@ class CRMUserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CRMAuthResponse(CRMUserResponse):
+    token: str
